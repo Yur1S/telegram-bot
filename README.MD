@@ -15,7 +15,7 @@ Telegram бот для поиска продукции в базах данны�
 1. Клонируйте репозиторий:
 ```bash
 git clone https://github.com/ваш-username/telegram-bot.git
-cd c:\Users\yur1s\Projects\telegram-bot
+cd C:\Users\yur1s\Documents\GitHub\telegram-bot
 ```
 
 2. Создайте виртуальное окружение:
