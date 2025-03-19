@@ -6,11 +6,17 @@ import pandas as pd
 import logging
 import asyncio
 import os
-from config import BOT_TOKEN, CHROME_OPTIONS, ADMIN_USERNAME
-from .scraper import ProductScraper
-from .report_generator import ReportGenerator
-from .user_manager import UserManager
+import sys
 
+# Add project root to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config import BOT_TOKEN, CHROME_OPTIONS, ADMIN_USERNAME
+from src.scraper import ProductScraper
+from src.report_generator import ReportGenerator
+from src.user_manager import UserManager
+
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
