@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -8,7 +8,6 @@ import asyncio
 import os
 import sys
 
-# Add project root to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import BOT_TOKEN, CHROME_OPTIONS, ADMIN_USERNAME
@@ -16,13 +15,24 @@ from src.scraper import ProductScraper
 from src.report_generator import ReportGenerator
 from src.user_manager import UserManager
 
-# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
     filename='bot.log'
 )
 logger = logging.getLogger(__name__)
+
+WELCOME_MESSAGE = """
+👋 Добро пожаловать в бот для поиска продукции!
+
+Этот бот поможет вам найти информацию о продукции в базах данных ГИСП и ЕАЭС.
+
+Для начала работы нажмите кнопку "🔍 Начать поиск" или используйте команду /start
+
+Доступные команды:
+/start - Начать поиск
+/help - Показать справку
+"""
 
 class ProductSearchBot:
     def __init__(self):
@@ -45,6 +55,11 @@ class ProductSearchBot:
             return False
         return True
 
+    async def welcome(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        keyboard = [[KeyboardButton("🔍 Начать поиск")]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text(WELCOME_MESSAGE, reply_markup=reply_markup)
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_access(update):
             return
@@ -58,7 +73,7 @@ class ProductSearchBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "Добро пожаловать! Выберите тип поиска:",
+            "Выберите тип поиска:",
             reply_markup=reply_markup
         )
 
@@ -116,13 +131,62 @@ class ProductSearchBot:
             await query.message.reply_text("Введите код ОКПД2 и наименование через запятую:")
             context.user_data['search_type'] = 'combined'
 
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.check_access(update):
+            return
+
+        if update.message.text == "🔍 Начать поиск":
+            await self.start(update, context)
+            return
+
+        if 'search_type' not in context.user_data:
+            await update.message.reply_text("Пожалуйста, выберите тип поиска с помощью команды /start")
+            return
+
+        search_type = context.user_data['search_type']
+        query = update.message.text
+
+        await update.message.reply_text("🔍 Выполняется поиск...")
+
+        try:
+            if search_type == 'okpd2':
+                results = self.scraper.search_gisp(okpd2=query)
+            elif search_type == 'name':
+                results = self.scraper.search_gisp(name=query)
+            elif search_type == 'combined':
+                okpd2, name = [x.strip() for x in query.split(',', 1)]
+                results = self.scraper.search_gisp(okpd2=okpd2, name=name)
+
+            if not results:
+                await update.message.reply_text("По вашему запросу ничего не найдено.")
+                return
+
+            excel_report = self.report_generator.generate_excel_report(results)
+            if excel_report:
+                await update.message.reply_document(
+                    document=excel_report,
+                    filename='search_results.xlsx',
+                    caption=f"Найдено результатов: {len(results)}"
+                )
+            else:
+                await update.message.reply_text("Ошибка при формировании отчета.")
+
+        except Exception as e:
+            logger.error(f"Search error: {e}")
+            await update.message.reply_text("Произошла ошибка при поиске. Попробуйте позже.")
+
+        finally:
+            context.user_data.pop('search_type', None)
+
     def run(self):
         try:
             application = Application.builder().token(BOT_TOKEN).build()
             
-            application.add_handler(CommandHandler("start", self.start))
+            application.add_handler(CommandHandler("start", self.welcome))
+            application.add_handler(CommandHandler("help", self.welcome))
             application.add_handler(CommandHandler("admin", self.admin_commands))
             application.add_handler(CallbackQueryHandler(self.search_handler))
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
             
             application.run_polling()
         except Exception as e:
