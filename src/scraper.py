@@ -73,36 +73,73 @@ class ProductScraper:
             try:
                 logger.info(f"Starting Excel processing, file size: {os.path.getsize(temp_file)} bytes")
                 
+                # Проверяем, что файл действительно Excel
+                if os.path.getsize(temp_file) < 100:
+                    raise Exception("Скачанный файл слишком маленький, возможно это не Excel")
+                
                 # Оптимизированные настройки pandas
                 pd.options.mode.chained_assignment = None
                 chunk_size = 5000  # Уменьшаем размер чанка еще больше
                 
+                # Пробуем прочитать первые строки для проверки структуры
+                try:
+                    test_df = pd.read_excel(
+                        temp_file,
+                        nrows=5,
+                        skiprows=2,
+                        engine='openpyxl'
+                    )
+                    logger.info(f"Excel test read successful, columns: {list(test_df.columns)}")
+                    
+                    # Оцениваем общее количество строк для отображения прогресса
+                    file_size = os.path.getsize(temp_file)
+                    estimated_rows = int((file_size / (1024 * 1024)) * 5000)
+                    logger.info(f"Estimated total rows: ~{estimated_rows} (based on file size {file_size/1024/1024:.2f} MB)")
+                    
+                except Exception as e:
+                    logger.error(f"Excel test read failed: {str(e)}", exc_info=True)
+                    raise Exception(f"Не удалось прочитать Excel файл: {str(e)}")
+                
                 # Читаем только необходимые колонки с оптимизированными типами данных
-                df_iterator = pd.read_excel(
-                    temp_file,
-                    usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
-                    skiprows=2,
-                    names=[
-                        'Предприятие', 'ИНН', 'Реестровый номер', 
-                        'Дата внесения в реестр', 'Срок действия',
-                        'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
-                    ],
-                    engine='openpyxl',
-                    dtype={
-                        'ИНН': str,
-                        'Реестровый номер': str,
-                        'ОКПД2': str,
-                        'ТН ВЭД': str,
-                        'Предприятие': str,
-                        'Наименование продукции': str,
-                        'Изготовлена по': str
-                    },
-                    chunksize=chunk_size
-                )
+                try:
+                    df_iterator = pd.read_excel(
+                        temp_file,
+                        usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
+                        skiprows=2,
+                        names=[
+                            'Предприятие', 'ИНН', 'Реестровый номер', 
+                            'Дата внесения в реестр', 'Срок действия',
+                            'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
+                        ],
+                        engine='openpyxl',
+                        dtype={
+                            'ИНН': str,
+                            'Реестровый номер': str,
+                            'ОКПД2': str,
+                            'ТН ВЭД': str,
+                            'Предприятие': str,
+                            'Наименование продукции': str,
+                            'Изготовлена по': str
+                        },
+                        chunksize=chunk_size
+                    )
+                except Exception as e:
+                    logger.error(f"Excel iterator creation failed: {str(e)}", exc_info=True)
+                    # Пробуем альтернативный подход без указания конкретных колонок
+                    df_iterator = pd.read_excel(
+                        temp_file,
+                        skiprows=2,
+                        engine='openpyxl',
+                        dtype=str,
+                        chunksize=chunk_size
+                    )
+                    logger.info("Using alternative Excel reading approach")
 
                 # Оптимизированная обработка чанков
                 first_chunk = True
                 total_rows = 0
+                start_time = time.time()
+                last_update_time = time.time()
                 
                 with open(self.GISP_FILE_PATH, 'w', encoding='utf-8-sig', newline='') as f:
                     for i, chunk in enumerate(df_iterator):
@@ -113,6 +150,11 @@ class ProductScraper:
                         # Обрабатываем чанк
                         chunk = chunk.dropna(how='all')
                         
+                        # Логируем информацию о первом чанке
+                        if i == 0:
+                            logger.info(f"First chunk columns: {list(chunk.columns)}")
+                            logger.info(f"First chunk shape: {chunk.shape}")
+                        
                         # Создаем индексы только для текущего чанка
                         if first_chunk:
                             chunk.to_csv(f, index=False)
@@ -121,13 +163,47 @@ class ProductScraper:
                             chunk.to_csv(f, index=False, header=False)
                         
                         total_rows += len(chunk)
-                        await status_message.edit_text(f"⏳ Обработано строк: {total_rows:,}")
+                        
+                        # Обновляем статус каждые 3 секунды или каждые 10000 строк
+                        current_time = time.time()
+                        if current_time - last_update_time > 3 or total_rows % 10000 == 0:
+                            elapsed_time = current_time - start_time
+                            rows_per_second = total_rows / elapsed_time if elapsed_time > 0 else 0
+                            
+                            # Оценка оставшегося времени
+                            if rows_per_second > 0 and estimated_rows > total_rows:
+                                remaining_rows = estimated_rows - total_rows
+                                remaining_time = remaining_rows / rows_per_second
+                                remaining_minutes = int(remaining_time / 60)
+                                remaining_seconds = int(remaining_time % 60)
+                                
+                                progress = min(100, int((total_rows / estimated_rows) * 100))
+                                
+                                await status_message.edit_text(
+                                    f"⏳ Обработка Excel файла...\n"
+                                    f"📊 Прогресс: {progress}%\n"
+                                    f"📝 Обработано строк: {total_rows:,} из ~{estimated_rows:,}\n"
+                                    f"⏱️ Скорость: {rows_per_second:.1f} строк/сек\n"
+                                    f"🕒 Осталось примерно: {remaining_minutes}м {remaining_seconds}с"
+                                )
+                            else:
+                                await status_message.edit_text(
+                                    f"⏳ Обработка Excel файла...\n"
+                                    f"📝 Обработано строк: {total_rows:,}\n"
+                                    f"⏱️ Скорость: {rows_per_second:.1f} строк/сек"
+                                )
+                                
+                            last_update_time = current_time
                         
                         # Очищаем память
                         del chunk
                         gc.collect()
 
                 logger.info(f"CSV file saved successfully, total rows: {total_rows}")
+                
+                # Проверяем, что CSV файл не пустой
+                if os.path.getsize(self.GISP_FILE_PATH) == 0:
+                    raise Exception("CSV файл создан, но имеет нулевой размер")
                 
                 # Обновляем индексы частями
                 await status_message.edit_text("⏳ Создание индексов поиска...")
@@ -136,6 +212,7 @@ class ProductScraper:
                 # Удаляем временный файл
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
+                    logger.info("Temporary Excel file removed")
                 
                 await status_message.edit_text("✅ Файл ГИСП успешно обновлен!")
                 self.last_update = datetime.now()
@@ -464,55 +541,145 @@ class ProductScraper:
             with open(temp_file, 'wb') as f:
                 f.write(response.content)
             
+            # Проверяем, что файл действительно Excel
+            if os.path.getsize(temp_file) < 100:
+                raise Exception("Скачанный файл слишком маленький, возможно это не Excel")
+            
             logger.info("Processing GISP file...")
+            
+            # Пробуем прочитать первые строки для проверки структуры
+            try:
+                test_df = pd.read_excel(
+                    temp_file,
+                    nrows=5,
+                    skiprows=2,
+                    engine='openpyxl'
+                )
+                logger.info(f"Excel test read successful, columns: {list(test_df.columns)}")
+                
+                # Оцениваем общее количество строк для отображения прогресса
+                file_size = os.path.getsize(temp_file)
+                estimated_rows = int((file_size / (1024 * 1024)) * 5000)
+                logger.info(f"Estimated total rows: ~{estimated_rows} (based on file size {file_size/1024/1024:.2f} MB)")
+                
+            except Exception as e:
+                logger.error(f"Excel test read failed: {str(e)}", exc_info=True)
+                raise Exception(f"Не удалось прочитать Excel файл: {str(e)}")
             
             # Оптимизированная обработка без статуса
             chunk_size = 5000
             first_chunk = True
             total_rows = 0
+            last_progress_time = time.time()
+            start_time = time.time()
             
             with open(self.GISP_FILE_PATH, 'w', encoding='utf-8-sig', newline='') as f:
-                for chunk in pd.read_excel(
-                    temp_file,
-                    usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
-                    skiprows=2,
-                    names=[
-                        'Предприятие', 'ИНН', 'Реестровый номер', 
-                        'Дата внесения в реестр', 'Срок действия',
-                        'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
-                    ],
-                    engine='openpyxl',
-                    dtype={
-                        'ИНН': str,
-                        'Реестровый номер': str,
-                        'ОКПД2': str,
-                        'ТН ВЭД': str
-                    },
-                    chunksize=chunk_size
-                ):
-                    # Очистка памяти
-                    import gc
-                    gc.collect()
+                try:
+                    for chunk in pd.read_excel(
+                        temp_file,
+                        usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
+                        skiprows=2,
+                        names=[
+                            'Предприятие', 'ИНН', 'Реестровый номер', 
+                            'Дата внесения в реестр', 'Срок действия',
+                            'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
+                        ],
+                        engine='openpyxl',
+                        dtype={
+                            'ИНН': str,
+                            'Реестровый номер': str,
+                            'ОКПД2': str,
+                            'ТН ВЭД': str
+                        },
+                        chunksize=chunk_size
+                    ):
+                        # Очистка памяти
+                        import gc
+                        gc.collect()
+                        
+                        # Обработка чанка
+                        chunk = chunk.dropna(how='all')
+                        
+                        # Логируем информацию о первом чанке
+                        if first_chunk:
+                            logger.info(f"First chunk columns: {list(chunk.columns)}")
+                            logger.info(f"First chunk shape: {chunk.shape}")
+                        
+                        # Запись в CSV
+                        if first_chunk:
+                            chunk.to_csv(f, index=False)
+                            first_chunk = False
+                        else:
+                            chunk.to_csv(f, index=False, header=False)
+                        
+                        total_rows += len(chunk)
+                        
+                        # Отображаем прогресс каждые 5 секунд
+                        current_time = time.time()
+                        if current_time - last_progress_time > 5:
+                            elapsed_time = current_time - start_time
+                            rows_per_second = total_rows / elapsed_time if elapsed_time > 0 else 0
+                            
+                            # Оценка оставшегося времени
+                            if rows_per_second > 0 and estimated_rows > total_rows:
+                                remaining_rows = estimated_rows - total_rows
+                                remaining_time = remaining_rows / rows_per_second
+                                remaining_minutes = int(remaining_time / 60)
+                                remaining_seconds = int(remaining_time % 60)
+                                
+                                progress = min(100, int((total_rows / estimated_rows) * 100))
+                                
+                                logger.info(
+                                    f"Progress: {progress}% - Processed {total_rows:,} rows "
+                                    f"({rows_per_second:.1f} rows/sec) - "
+                                    f"Est. remaining: {remaining_minutes}m {remaining_seconds}s"
+                                )
+                            else:
+                                logger.info(f"Processed {total_rows:,} rows ({rows_per_second:.1f} rows/sec)")
+                                
+                            last_progress_time = current_time
+                        
+                        # Очистка памяти
+                        del chunk
+                        gc.collect()
+                except Exception as e:
+                    logger.error(f"Excel processing failed: {str(e)}", exc_info=True)
+                    # Пробуем альтернативный подход без указания конкретных колонок
+                    f.seek(0)  # Возвращаемся в начало файла
+                    first_chunk = True
+                    total_rows = 0
                     
-                    # Обработка чанка
-                    chunk = chunk.dropna(how='all')
-                    
-                    # Запись в CSV
-                    if first_chunk:
-                        chunk.to_csv(f, index=False)
-                        first_chunk = False
-                    else:
-                        chunk.to_csv(f, index=False, header=False)
-                    
-                    total_rows += len(chunk)
-                    
-                    # Очистка памяти
-                    del chunk
-                    gc.collect()
+                    for chunk in pd.read_excel(
+                        temp_file,
+                        skiprows=2,
+                        engine='openpyxl',
+                        dtype=str,
+                        chunksize=chunk_size
+                    ):
+                        # Обработка чанка
+                        chunk = chunk.dropna(how='all')
+                        
+                        # Запись в CSV
+                        if first_chunk:
+                            chunk.to_csv(f, index=False)
+                            first_chunk = False
+                        else:
+                            chunk.to_csv(f, index=False, header=False)
+                        
+                        total_rows += len(chunk)
+                        
+                        # Очистка памяти
+                        del chunk
+                        gc.collect()
+            
+            # Проверяем, что CSV файл не пустой
+            if os.path.getsize(self.GISP_FILE_PATH) == 0:
+                raise Exception("CSV файл создан, но имеет нулевой размер")
             
             # Удаляем временный файл
             if os.path.exists(temp_file):
                 os.remove(temp_file)
+                logger.info("Temporary Excel file removed")
             
             # Обновляем индексы
             self._update_search_index_by_chunks()
