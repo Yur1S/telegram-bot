@@ -220,7 +220,12 @@ class ProductSearchBot:
 
         stop_keyboard = [[KeyboardButton("🛑 Остановить поиск")]]
         stop_markup = ReplyKeyboardMarkup(stop_keyboard, resize_keyboard=True)
-        await update.message.reply_text("🔍 Выполняется поиск...", reply_markup=stop_markup)
+        
+        status_message = await update.message.reply_text(
+            "🔍 Выполняется поиск...\n"
+            "⏳ Поиск в ГИСП...",
+            reply_markup=stop_markup
+        )
 
         try:
             if user_id not in self.active_searches:
@@ -233,56 +238,81 @@ class ProductSearchBot:
 
             if search_type == 'okpd2':
                 if source == 'gisp':
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
                     results = self.scraper.search_gisp(okpd2=query)
                 elif source == 'eaeu':
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
                     results = self.scraper.search_eaeu(okpd2=query)
                 else:
-                    results = self.scraper.search_all(okpd2=query)
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
+                    gisp_results = self.scraper.search_gisp(okpd2=query)
+                    if user_id not in self.active_searches:
+                        return
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
+                    eaeu_results = self.scraper.search_eaeu(okpd2=query)
+                    results = gisp_results + eaeu_results
             elif search_type == 'name':
                 if source == 'gisp':
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
                     results = self.scraper.search_gisp(name=query)
                 elif source == 'eaeu':
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
                     results = self.scraper.search_eaeu(name=query)
                 else:
-                    results = self.scraper.search_all(name=query)
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
+                    gisp_results = self.scraper.search_gisp(name=query)
+                    if user_id not in self.active_searches:
+                        return
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
+                    eaeu_results = self.scraper.search_eaeu(name=query)
+                    results = gisp_results + eaeu_results
             elif search_type == 'combined':
                 okpd2, name = [x.strip() for x in query.split(',', 1)]
                 if source == 'gisp':
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
                     results = self.scraper.search_gisp(okpd2=okpd2, name=name)
                 elif source == 'eaeu':
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
                     results = self.scraper.search_eaeu(okpd2=okpd2, name=name)
                 else:
-                    results = self.scraper.search_all(okpd2=okpd2, name=name)
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
+                    gisp_results = self.scraper.search_gisp(okpd2=okpd2, name=name)
+                    if user_id not in self.active_searches:
+                        return
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
+                    eaeu_results = self.scraper.search_eaeu(okpd2=okpd2, name=name)
+                    results = gisp_results + eaeu_results
 
             if user_id not in self.active_searches:
+                await status_message.delete()
                 return
 
             if not results:
-                await update.message.reply_text(
-                    "По вашему запросу ничего не найдено.",
+                await status_message.edit_text(
+                    "❌ По вашему запросу ничего не найдено.",
                     reply_markup=ReplyKeyboardRemove()
                 )
                 await self.start(update, context)
                 return
 
-            if user_id not in self.active_searches:
-                return
-
+            await status_message.edit_text("📊 Формирование отчета...")
             excel_report = self.report_generator.generate_excel_report(results)
+            
             if excel_report and user_id in self.active_searches:
+                await status_message.delete()
                 await update.message.reply_document(
                     document=excel_report,
                     filename='search_results.xlsx',
-                    caption=f"Найдено результатов: {len(results)}",
+                    caption=f"✅ Найдено результатов: {len(results)}",
                     reply_markup=ReplyKeyboardRemove()
                 )
                 await self.start(update, context)
             else:
-                await update.message.reply_text("Ошибка при формировании отчета.")
+                await status_message.edit_text("❌ Ошибка при формировании отчета.")
 
         except Exception as e:
             logger.error(f"Search error: {e}")
-            await update.message.reply_text("Произошла ошибка при поиске. Попробуйте позже.")
+            await status_message.edit_text("❌ Произошла ошибка при поиске. Попробуйте позже.")
 
         finally:
             if user_id in self.active_searches:
