@@ -309,19 +309,20 @@ class ProductScraper:
             # Создаем пустые индексы в случае ошибки
             self.search_index = {'okpd2': {}, 'name': set()}
         
+        # Удаляем этот код, так как переменная df не определена
         # Индекс для ОКПД2
-        for idx, code in enumerate(df['ОКПД2']):
-            if pd.notna(code):
-                code = str(code).lower()
-                for i in range(len(code)):
-                    prefix = code[:i+1]
-                    if prefix not in self.search_index['okpd2']:
-                        self.search_index['okpd2'][prefix] = set()
-                    self.search_index['okpd2'][prefix].add(idx)
+        # for idx, code in enumerate(df['ОКПД2']):
+        #     if pd.notna(code):
+        #         code = str(code).lower()
+        #         for i in range(len(code)):
+        #             prefix = code[:i+1]
+        #             if prefix not in self.search_index['okpd2']:
+        #                 self.search_index['okpd2'][prefix] = set()
+        #             self.search_index['okpd2'][prefix].add(idx)
         
-        # Индекс для наименований
-        self.search_index['name'] = set(df['Наименование продукции'].str.lower().dropna())
-        logger.info("Search indexes updated successfully")
+        # # Индекс для наименований
+        # self.search_index['name'] = set(df['Наименование продукции'].str.lower().dropna())
+        # logger.info("Search indexes updated successfully")
 
     async def search_gisp(self, okpd2: Optional[str] = None, name: Optional[str] = None, status_message=None) -> List[Dict]:
         try:
@@ -343,7 +344,8 @@ class ProductScraper:
                         'ТН ВЭД': str
                     }
                 )
-                self._update_search_index(self.df_cache)
+                # Заменяем вызов несуществующего метода
+                self._update_search_index_by_chunks()
 
             df = self.df_cache
             total_rows = len(df)
