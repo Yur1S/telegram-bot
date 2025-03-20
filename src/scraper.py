@@ -68,15 +68,17 @@ class ProductScraper:
                 raise Exception(f"Failed to download file: {str(e)}")
 
             # Этап 2: Обработка файла
+            # Optimized Excel processing
             await status_message.edit_text("⏳ Обработка файла Excel...")
             try:
                 logger.info(f"Starting Excel processing, file size: {os.path.getsize(temp_file)} bytes")
                 
-                # Читаем Excel файл по частям
-                chunk_size = 10000  # количество строк в одной части
-                chunks = []
+                # Use optimized settings for pandas
+                pd.options.mode.chained_assignment = None
+                chunk_size = 50000  # Larger chunks for better performance
                 
-                for chunk in pd.read_excel(
+                # Read Excel with optimized settings
+                df_iterator = pd.read_excel(
                     temp_file,
                     usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
                     skiprows=2,
@@ -87,39 +89,52 @@ class ProductScraper:
                     ],
                     engine='openpyxl',
                     dtype={
-                        'ИНН': str,
-                        'Реестровый номер': str,
-                        'ОКПД2': str,
-                        'ТН ВЭД': str
+                        'ИНН': 'string',
+                        'Реестровый номер': 'string',
+                        'ОКПД2': 'string',
+                        'ТН ВЭД': 'string',
+                        'Предприятие': 'string',
+                        'Наименование продукции': 'string',
+                        'Изготовлена по': 'string'
                     },
                     chunksize=chunk_size
-                ):
-                    chunks.append(chunk)
-                    logger.info(f"Processed chunk of {len(chunk)} rows")
-                    await status_message.edit_text(f"⏳ Обработка файла Excel... ({len(chunks) * chunk_size} строк)")
+                )
+
+                # Process chunks with memory optimization
+                first_chunk = True
+                total_rows = 0
                 
-                # Объединяем все части
-                df = pd.concat(chunks, ignore_index=True)
-                logger.info(f"Excel file loaded, total rows: {len(df)}")
+                with open(self.GISP_FILE_PATH, 'w', encoding='utf-8-sig', newline='') as f:
+                    for i, chunk in enumerate(df_iterator):
+                        # Clean chunk data
+                        chunk = chunk.dropna(how='all')
+                        total_rows += len(chunk)
+                        
+                        # Write header only once
+                        if first_chunk:
+                            chunk.to_csv(f, index=False)
+                            first_chunk = False
+                        else:
+                            chunk.to_csv(f, index=False, header=False)
+                        
+                        await status_message.edit_text(f"⏳ Обработано строк: {total_rows:,}")
+                        
+                        # Force garbage collection
+                        del chunk
+                        if i % 5 == 0:  # Every 5 chunks
+                            import gc
+                            gc.collect()
+
+                logger.info(f"CSV file saved successfully, total rows: {total_rows}")
                 
-                await status_message.edit_text("⏳ Оптимизация данных...")
-                df = df.dropna(how='all')
-                df = df.reset_index(drop=True)
-                logger.info(f"Data optimized, final rows: {len(df)}")
+                # Load the first chunk for indexing
+                df_sample = pd.read_csv(self.GISP_FILE_PATH, nrows=1000)
+                self._update_search_index(df_sample)
+                del df_sample
                 
-                # Сохраняем в CSV с проверкой
-                await status_message.edit_text("⏳ Сохранение в CSV...")
-                csv_path = self.GISP_FILE_PATH
-                df.to_csv(csv_path, index=False)
-                
-                if not os.path.exists(csv_path):
-                    raise Exception(f"CSV file was not created at {csv_path}")
-                
-                logger.info(f"CSV file saved successfully at {csv_path}, size: {os.path.getsize(csv_path)} bytes")
                 await status_message.edit_text("✅ Файл ГИСП успешно обновлен!")
-                
                 self.last_update = datetime.now()
-                
+
             except Exception as e:
                 logger.error(f"Excel processing failed: {str(e)}", exc_info=True)
                 await status_message.edit_text(f"❌ Ошибка при обработке файла: {str(e)}")
