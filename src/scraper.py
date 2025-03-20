@@ -206,43 +206,64 @@ class ProductScraper:
                     logger.error("Failed to download GISP file")
                     return []
 
-            df = pd.read_csv(self.GISP_FILE_PATH)
+            # Читаем CSV с оптимизированными типами данных
+            df = pd.read_csv(
+                self.GISP_FILE_PATH,
+                dtype={
+                    'ИНН': str,
+                    'Реестровый номер': str,
+                    'ОКПД2': str,
+                    'ТН ВЭД': str
+                }
+            )
             
+            # Предварительно конвертируем строки поиска
             if name:
                 name = name.lower()
             if okpd2:
                 okpd2 = okpd2.lower()
             
-            results = []
-            
+            # Создаем маску для поиска с оптимизацией
             if okpd2 and name:
+                # Предварительно создаем временные столбцы для поиска
+                df['_окпд2_lower'] = df['ОКПД2'].str.lower()
+                df['_name_lower'] = df['Наименование продукции'].str.lower()
                 mask = (
-                    df['ОКПД2'].str.lower().str.contains(okpd2, na=False) &
-                    df['Наименование продукции'].str.lower().str.contains(name, na=False)
+                    df['_окпд2_lower'].str.contains(okpd2, na=False) &
+                    df['_name_lower'].str.contains(name, na=False)
                 )
+                # Удаляем временные столбцы
+                df.drop(['_окпд2_lower', '_name_lower'], axis=1, inplace=True)
             elif okpd2:
-                mask = df['ОКПД2'].str.lower().str.contains(okpd2, na=False)
+                df['_окпд2_lower'] = df['ОКПД2'].str.lower()
+                mask = df['_окпд2_lower'].str.contains(okpd2, na=False)
+                df.drop(['_окпд2_lower'], axis=1, inplace=True)
             elif name:
-                mask = df['Наименование продукции'].str.lower().str.contains(name, na=False)
+                df['_name_lower'] = df['Наименование продукции'].str.lower()
+                mask = df['_name_lower'].str.contains(name, na=False)
+                df.drop(['_name_lower'], axis=1, inplace=True)
             else:
                 return []
 
-            for _, row in df[mask].iterrows():
-                results.append({
-                    'name': row['Наименование продукции'],
-                    'okpd2_code': row['ОКПД2'],
-                    'manufacturer': row['Предприятие'],
-                    'inn': row['ИНН'],
-                    'registry_number': row['Реестровый номер'],
-                    'registry_date': row['Дата внесения в реестр'],
-                    'valid_until': row['Срок действия'],
-                    'tn_ved': row['ТН ВЭД'],
-                    'standard': row['Изготовлена по'],
-                    'source': 'ГИСП'
-                })
+            # Применяем маску и конвертируем в список словарей
+            results = df[mask].to_dict('records')
+            
+            # Преобразуем результаты в нужный формат
+            formatted_results = [{
+                'name': row['Наименование продукции'],
+                'okpd2_code': row['ОКПД2'],
+                'manufacturer': row['Предприятие'],
+                'inn': row['ИНН'],
+                'registry_number': row['Реестровый номер'],
+                'registry_date': row['Дата внесения в реестр'],
+                'valid_until': row['Срок действия'],
+                'tn_ved': row['ТН ВЭД'],
+                'standard': row['Изготовлена по'],
+                'source': 'ГИСП'
+            } for row in results]
 
-            logger.info(f"GISP search completed, found {len(results)} results")
-            return results
+            logger.info(f"GISP search completed, found {len(formatted_results)} results")
+            return formatted_results
 
         except Exception as e:
             logger.error(f"GISP search error: {e}")
