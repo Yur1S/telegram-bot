@@ -6,6 +6,77 @@ import asyncio
 import os
 import sys
 
+# В начале файла, после импортов
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG,  # Изменено с INFO на DEBUG
+    filename='bot.log',
+    encoding='utf-8'
+)
+
+class ProductSearchBot:
+    def __init__(self):
+        logger.debug("Initializing ProductSearchBot...")
+        try:
+            self.scraper = ProductScraper()
+            self.report_generator = ReportGenerator()
+            self.user_manager = UserManager()
+            self.active_searches = set()
+            self.file_update_status = None
+            
+            # Проверяем и создаем директорию для данных
+            os.makedirs('data', exist_ok=True)
+            
+            # Инициализируем файл пользователей, если он не существует
+            if not os.path.exists('data/users.json'):
+                with open('data/users.json', 'w', encoding='utf-8') as f:
+                    json.dump({"admins": [ADMIN_USERNAME], "usernames": []}, f)
+            
+            if not self.user_manager.is_admin(ADMIN_USERNAME):
+                logger.debug(f"Adding {ADMIN_USERNAME} as admin")
+                self.user_manager.allowed_users["admins"].append(ADMIN_USERNAME)
+                self.user_manager._save_users()
+            logger.debug("ProductSearchBot initialized successfully")
+        except Exception as e:
+            logger.error(f"Error during initialization: {e}", exc_info=True)
+            raise
+
+    async def welcome(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            logger.debug(f"Welcome message for user {update.effective_user.username}")
+            keyboard = [[KeyboardButton("🔍 Начать поиск")]]
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            await update.message.reply_text(
+                WELCOME_MESSAGE, 
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+            logger.debug("Welcome message sent successfully")
+        except Exception as e:
+            logger.error(f"Error in welcome handler: {e}", exc_info=True)
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            logger.debug(f"Start command from user {update.effective_user.username}")
+            if not await self.check_access(update):
+                return
+
+            keyboard = [
+                [
+                    InlineKeyboardButton("Поиск по ОКПД2", callback_data='search_okpd2'),
+                    InlineKeyboardButton("Поиск по наименованию", callback_data='search_name')
+                ],
+                [InlineKeyboardButton("Комбинированный поиск", callback_data='search_combined')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "Выберите тип поиска:",
+                reply_markup=reply_markup
+            )
+            logger.debug("Start command processed successfully")
+        except Exception as e:
+            logger.error(f"Error in start handler: {e}", exc_info=True)
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import BOT_TOKEN, ADMIN_USERNAME
