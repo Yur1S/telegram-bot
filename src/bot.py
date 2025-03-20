@@ -187,82 +187,22 @@ class ProductSearchBot:
 
         try:
             logger.debug("Starting GISP file download process...")
-            await status_message.edit_text("⏳ Начало обновления файла ГИСП...\nПодключение к серверу...")
+            total_rows = await self.scraper.download_gisp_file_with_status(status_message)
             
-            await self.scraper.download_gisp_file_with_status(self.file_update_status)
-            
-            logger.debug("GISP file download completed")
-            await status_message.edit_text("✅ Файл ГИСП успешно обновлен!")
+            if total_rows > 0:
+                logger.debug(f"GISP file download completed, processed {total_rows} rows")
+                await status_message.edit_text(
+                    f"✅ Файл ГИСП успешно обновлен!\n"
+                    f"📊 Обработано строк: {total_rows:,}"
+                )
+            else:
+                await status_message.edit_text("❌ Не удалось обновить файл ГИСП")
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Manual GISP update error: {error_msg}", exc_info=True)
             await status_message.edit_text(f"❌ Ошибка при обновлении файла ГИСП:\n{error_msg[:200]}")
         finally:
             self.file_update_status = None
-
-    async def admin_commands(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user = update.effective_user
-        logger.debug(f"Admin command from {user.username}")
-        if not self.user_manager.is_admin(user.username):
-            await update.message.reply_text("У вас нет прав администратора.")
-            return
-
-        command = context.args[0] if context.args else "help"
-        if command == "add":
-            if len(context.args) < 2:
-                await update.message.reply_text("Укажите username пользователя: /admin add username")
-                return
-            username = context.args[1]
-            self.user_manager.add_user(username=username)
-            await update.message.reply_text(f"Пользователь {username} добавлен")
-        
-        elif command == "remove":
-            if len(context.args) < 2:
-                await update.message.reply_text("Укажите username пользователя: /admin remove username")
-                return
-            username = context.args[1]
-            self.user_manager.remove_user(username=username)
-            await update.message.reply_text(f"Пользователь {username} удален")
-        
-        elif command == "list":
-            users = self.user_manager.allowed_users["usernames"]
-            message = "Список разрешенных пользователей:\n" + "\n".join(users)
-            await update.message.reply_text(message)
-        
-        else:
-            help_text = """
-Команды администратора:
-/admin add username - Добавить пользователя
-/admin remove username - Удалить пользователя
-/admin list - Показать список пользователей
-/update_gisp - Обновить файл ГИСП
-            """
-            await update.message.reply_text(help_text)
-
-    async def search_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_access(update):
-            return
-
-        query = update.callback_query
-        await query.answer()
-        
-        if query.data.startswith('search_'):
-            context.user_data['search_type'] = query.data.replace('search_', '')
-            keyboard = [
-                [InlineKeyboardButton(name, callback_data=f'source_{key}')]
-                for key, name in SEARCH_SOURCES.items()
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text("Выберите источник поиска:", reply_markup=reply_markup)
-        elif query.data.startswith('source_'):
-            context.user_data['source'] = query.data.replace('source_', '')
-            search_type = context.user_data['search_type']
-            if search_type == 'okpd2':
-                await query.message.reply_text("Введите код ОКПД2:")
-            elif search_type == 'name':
-                await query.message.reply_text("Введите наименование продукции:")
-            elif search_type == 'combined':
-                await query.message.reply_text("Введите код ОКПД2 и наименование через запятую:")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_access(update):
@@ -282,93 +222,60 @@ class ProductSearchBot:
 
         search_type = context.user_data['search_type']
         source = context.user_data.get('source', 'all')
-        query = update.message.text
+        query = update.message.text.strip()
         user_id = update.effective_user.id
         
         if user_id in self.active_searches:
-            await update.message.reply_text("Поиск уже выполняется. Дождитесь результатов или остановите текущий поиск.")
+            await update.message.reply_text("🔄 Поиск уже выполняется. Дождитесь результатов или остановите текущий поиск.")
             return
             
         self.active_searches.add(user_id)
-
-        stop_keyboard = [[KeyboardButton("🛑 Остановить поиск")]]
-        stop_markup = ReplyKeyboardMarkup(stop_keyboard, resize_keyboard=True)
         
-        status_message = await update.message.reply_text(
-            "🔍 Начинаем поиск...",
-            reply_markup=stop_markup
-        )
-
         try:
-            if user_id not in self.active_searches:
-                return
-
-            results = []
+            status_message = await update.message.reply_text("⏳ Начинаем поиск...")
+            
             if search_type == 'okpd2':
-                if source == 'gisp':
-                    results = await self.scraper.search_gisp(okpd2=query, status_message=status_message)
-                elif source == 'eaeu':
-                    results = self.scraper.search_eaeu(okpd2=query)
-                else:
-                    results = await self.scraper.search_all(okpd2=query, status_message=status_message)
-
+                results = await self.scraper.search_all(okpd2=query, status_message=status_message)
             elif search_type == 'name':
-                if source == 'gisp':
-                    results = await self.scraper.search_gisp(name=query, status_message=status_message)
-                elif source == 'eaeu':
-                    results = self.scraper.search_eaeu(name=query)
-                else:
-                    results = await self.scraper.search_all(name=query, status_message=status_message)
-
+                results = await self.scraper.search_all(name=query, status_message=status_message)
             elif search_type == 'combined':
                 try:
                     okpd2, name = [x.strip() for x in query.split(',', 1)]
-                except ValueError:
-                    await status_message.edit_text("❌ Неверный формат. Введите код ОКПД2 и наименование через запятую.")
-                    return
-                
-                if source == 'gisp':
-                    results = await self.scraper.search_gisp(okpd2=okpd2, name=name, status_message=status_message)
-                elif source == 'eaeu':
-                    results = self.scraper.search_eaeu(okpd2=okpd2, name=name)
-                else:
                     results = await self.scraper.search_all(okpd2=okpd2, name=name, status_message=status_message)
-
-            if user_id not in self.active_searches:
-                await status_message.delete()
-                return
-
-            if not results:
-                await status_message.edit_text(
-                    "❌ По вашему запросу ничего не найдено.",
-                    reply_markup=ReplyKeyboardRemove()
-                )
-                await self.start(update, context)
-                return
-
-            await status_message.edit_text("📊 Формирование отчета...")
-            excel_report = self.report_generator.generate_excel_report(results)
+                except ValueError:
+                    await status_message.edit_text("❌ Неверный формат. Введите код ОКПД2 и наименование через запятую")
+                    self.active_searches.remove(user_id)
+                    return
             
-            if excel_report and user_id in self.active_searches:
-                await status_message.delete()
-                await update.message.reply_document(
-                    document=excel_report,
-                    filename='search_results.xlsx',
-                    caption=f"✅ Найдено результатов: {len(results)}",
-                    reply_markup=ReplyKeyboardRemove()
-                )
-                await self.start(update, context)
-            else:
-                await status_message.edit_text("❌ Ошибка при формировании отчета.")
-
-        except Exception as e:
-            logger.error(f"Search error: {e}")
-            await status_message.edit_text("❌ Произошла ошибка при поиске. Попробуйте позже.")
-
-        finally:
-            if user_id in self.active_searches:
+            if not results:
+                await status_message.edit_text("❌ Ничего не найдено")
                 self.active_searches.remove(user_id)
-            context.user_data.clear()
+                return
+                
+            # Отправляем результаты частями
+            chunk_size = 10
+            for i in range(0, len(results), chunk_size):
+                chunk = results[i:i + chunk_size]
+                message = f"📄 Результаты поиска (часть {i//chunk_size + 1}/{-(-len(results)//chunk_size)}):\n\n"
+                for item in chunk:
+                    message += (
+                        f"🏢 {item['manufacturer']}\n"
+                        f"📦 {item['name']}\n"
+                        f"📝 ОКПД2: {item['okpd2_code']}\n"
+                        f"🔢 ИНН: {item['inn']}\n"
+                        f"📋 Реестровый номер: {item['registry_number']}\n"
+                        f"📅 Дата регистрации: {item['registry_date']}\n"
+                        f"⏳ Действует до: {item['valid_until']}\n"
+                        f"🌐 Источник: {item['source']}\n"
+                        f"{'=' * 30}\n"
+                    )
+                await update.message.reply_text(message)
+                
+        except Exception as e:
+            logger.error(f"Search error: {e}", exc_info=True)
+            await status_message.edit_text(f"❌ Ошибка при поиске: {str(e)}")
+        finally:
+            self.active_searches.remove(user_id)
 
     def run(self):
         try:
