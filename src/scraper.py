@@ -68,16 +68,16 @@ class ProductScraper:
                 raise Exception(f"Failed to download file: {str(e)}")
 
             # Этап 2: Обработка файла
-            # Optimized Excel processing
+            # Оптимизированная обработка Excel
             await status_message.edit_text("⏳ Обработка файла Excel...")
             try:
                 logger.info(f"Starting Excel processing, file size: {os.path.getsize(temp_file)} bytes")
                 
-                # Use optimized settings for pandas
+                # Оптимизированные настройки pandas
                 pd.options.mode.chained_assignment = None
-                chunk_size = 50000  # Larger chunks for better performance
+                chunk_size = 10000  # Уменьшаем размер чанка
                 
-                # Read Excel with optimized settings
+                # Читаем только необходимые колонки с оптимизированными типами данных
                 df_iterator = pd.read_excel(
                     temp_file,
                     usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
@@ -100,37 +100,39 @@ class ProductScraper:
                     chunksize=chunk_size
                 )
 
-                # Process chunks with memory optimization
+                # Оптимизированная обработка чанков
                 first_chunk = True
                 total_rows = 0
                 
                 with open(self.GISP_FILE_PATH, 'w', encoding='utf-8-sig', newline='') as f:
                     for i, chunk in enumerate(df_iterator):
-                        # Clean chunk data
-                        chunk = chunk.dropna(how='all')
-                        total_rows += len(chunk)
+                        # Очищаем память перед обработкой нового чанка
+                        import gc
+                        gc.collect()
                         
-                        # Write header only once
+                        # Обрабатываем чанк
+                        chunk = chunk.dropna(how='all')
+                        chunk = chunk.reset_index(drop=True)
+                        
+                        # Создаем индексы только для текущего чанка
                         if first_chunk:
                             chunk.to_csv(f, index=False)
                             first_chunk = False
                         else:
                             chunk.to_csv(f, index=False, header=False)
                         
+                        total_rows += len(chunk)
                         await status_message.edit_text(f"⏳ Обработано строк: {total_rows:,}")
                         
-                        # Force garbage collection
+                        # Очищаем память
                         del chunk
-                        if i % 5 == 0:  # Every 5 chunks
-                            import gc
-                            gc.collect()
+                        gc.collect()
 
                 logger.info(f"CSV file saved successfully, total rows: {total_rows}")
                 
-                # Load the first chunk for indexing
-                df_sample = pd.read_csv(self.GISP_FILE_PATH, nrows=1000)
-                self._update_search_index(df_sample)
-                del df_sample
+                # Обновляем индексы частями
+                await status_message.edit_text("⏳ Создание индексов поиска...")
+                self._update_search_index_by_chunks()
                 
                 await status_message.edit_text("✅ Файл ГИСП успешно обновлен!")
                 self.last_update = datetime.now()
