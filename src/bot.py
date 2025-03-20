@@ -5,77 +5,7 @@ import logging
 import asyncio
 import os
 import sys
-
-# В начале файла, после импортов
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG,  # Изменено с INFO на DEBUG
-    filename='bot.log',
-    encoding='utf-8'
-)
-
-class ProductSearchBot:
-    def __init__(self):
-        logger.debug("Initializing ProductSearchBot...")
-        try:
-            self.scraper = ProductScraper()
-            self.report_generator = ReportGenerator()
-            self.user_manager = UserManager()
-            self.active_searches = set()
-            self.file_update_status = None
-            
-            # Проверяем и создаем директорию для данных
-            os.makedirs('data', exist_ok=True)
-            
-            # Инициализируем файл пользователей, если он не существует
-            if not os.path.exists('data/users.json'):
-                with open('data/users.json', 'w', encoding='utf-8') as f:
-                    json.dump({"admins": [ADMIN_USERNAME], "usernames": []}, f)
-            
-            if not self.user_manager.is_admin(ADMIN_USERNAME):
-                logger.debug(f"Adding {ADMIN_USERNAME} as admin")
-                self.user_manager.allowed_users["admins"].append(ADMIN_USERNAME)
-                self.user_manager._save_users()
-            logger.debug("ProductSearchBot initialized successfully")
-        except Exception as e:
-            logger.error(f"Error during initialization: {e}", exc_info=True)
-            raise
-
-    async def welcome(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        try:
-            logger.debug(f"Welcome message for user {update.effective_user.username}")
-            keyboard = [[KeyboardButton("🔍 Начать поиск")]]
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-            await update.message.reply_text(
-                WELCOME_MESSAGE, 
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-            logger.debug("Welcome message sent successfully")
-        except Exception as e:
-            logger.error(f"Error in welcome handler: {e}", exc_info=True)
-
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        try:
-            logger.debug(f"Start command from user {update.effective_user.username}")
-            if not await self.check_access(update):
-                return
-
-            keyboard = [
-                [
-                    InlineKeyboardButton("Поиск по ОКПД2", callback_data='search_okpd2'),
-                    InlineKeyboardButton("Поиск по наименованию", callback_data='search_name')
-                ],
-                [InlineKeyboardButton("Комбинированный поиск", callback_data='search_combined')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                "Выберите тип поиска:",
-                reply_markup=reply_markup
-            )
-            logger.debug("Start command processed successfully")
-        except Exception as e:
-            logger.error(f"Error in start handler: {e}", exc_info=True)
+import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -86,12 +16,11 @@ from src.user_manager import UserManager
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    filename='bot.log'
+    level=logging.DEBUG,
+    filename='bot.log',
+    encoding='utf-8'
 )
 logger = logging.getLogger(__name__)
-
-logger.info("Starting bot initialization...")
 
 WELCOME_MESSAGE = """
 👋 Добро пожаловать в бот для поиска продукции!
@@ -144,7 +73,7 @@ SEARCH_SOURCES = {
 
 class ProductSearchBot:
     def __init__(self):
-        logger.info("Initializing ProductSearchBot...")
+        logger.debug("Initializing ProductSearchBot...")
         try:
             self.scraper = ProductScraper()
             self.report_generator = ReportGenerator()
@@ -152,29 +81,43 @@ class ProductSearchBot:
             self.active_searches = set()
             self.file_update_status = None
             
+            os.makedirs('data', exist_ok=True)
+            
+            if not os.path.exists('data/users.json'):
+                with open('data/users.json', 'w', encoding='utf-8') as f:
+                    json.dump({"admins": [ADMIN_USERNAME], "usernames": []}, f)
+            
             if not self.user_manager.is_admin(ADMIN_USERNAME):
-                logger.info(f"Adding {ADMIN_USERNAME} as admin")
+                logger.debug(f"Adding {ADMIN_USERNAME} as admin")
                 self.user_manager.allowed_users["admins"].append(ADMIN_USERNAME)
                 self.user_manager._save_users()
-            logger.info("ProductSearchBot initialized successfully")
+            logger.debug("ProductSearchBot initialized successfully")
         except Exception as e:
-            logger.error(f"Error during initialization: {e}")
+            logger.error(f"Error during initialization: {e}", exc_info=True)
             raise
 
     async def check_access(self, update: Update) -> bool:
         user = update.effective_user
         has_access = self.user_manager.is_allowed(username=user.username)
-        logger.info(f"Access check for {user.username}: {has_access}")
+        logger.debug(f"Access check for {user.username}: {has_access}")
         if not has_access:
             await update.message.reply_text("У вас нет доступа к боту. Обратитесь к администратору.")
             return False
         return True
 
     async def welcome(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        logger.info(f"Welcome message for user {update.effective_user.username}")
-        keyboard = [[KeyboardButton("🔍 Начать поиск")]]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text(WELCOME_MESSAGE, reply_markup=reply_markup)
+        try:
+            logger.debug(f"Welcome message for user {update.effective_user.username}")
+            keyboard = [[KeyboardButton("🔍 Начать поиск")]]
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            await update.message.reply_text(
+                WELCOME_MESSAGE, 
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+            logger.debug("Welcome message sent successfully")
+        except Exception as e:
+            logger.error(f"Error in welcome handler: {e}", exc_info=True)
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_access(update):
@@ -182,26 +125,30 @@ class ProductSearchBot:
         await update.message.reply_text(HELP_MESSAGE)
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        logger.info(f"Start command from user {update.effective_user.username}")
-        if not await self.check_access(update):
-            return
+        try:
+            logger.debug(f"Start command from user {update.effective_user.username}")
+            if not await self.check_access(update):
+                return
 
-        keyboard = [
-            [
-                InlineKeyboardButton("Поиск по ОКПД2", callback_data='search_okpd2'),
-                InlineKeyboardButton("Поиск по наименованию", callback_data='search_name')
-            ],
-            [InlineKeyboardButton("Комбинированный поиск", callback_data='search_combined')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            "Выберите тип поиска:",
-            reply_markup=reply_markup
-        )
+            keyboard = [
+                [
+                    InlineKeyboardButton("Поиск по ОКПД2", callback_data='search_okpd2'),
+                    InlineKeyboardButton("Поиск по наименованию", callback_data='search_name')
+                ],
+                [InlineKeyboardButton("Комбинированный поиск", callback_data='search_combined')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "Выберите тип поиска:",
+                reply_markup=reply_markup
+            )
+            logger.debug("Start command processed successfully")
+        except Exception as e:
+            logger.error(f"Error in start handler: {e}", exc_info=True)
 
     async def stop_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        logger.info(f"Stop search for user {update.effective_user.username}")
+        logger.debug(f"Stop search for user {update.effective_user.username}")
         if user_id in self.active_searches:
             self.active_searches.remove(user_id)
             context.user_data.clear()
@@ -215,7 +162,7 @@ class ProductSearchBot:
 
     async def update_gisp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
-        logger.info(f"Manual GISP update requested by {user.username}")
+        logger.debug(f"Manual GISP update requested by {user.username}")
         if not self.user_manager.is_admin(user.username):
             await update.message.reply_text("У вас нет прав администратора.")
             return
@@ -234,7 +181,7 @@ class ProductSearchBot:
 
     async def admin_commands(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
-        logger.info(f"Admin command from {user.username}")
+        logger.debug(f"Admin command from {user.username}")
         if not self.user_manager.is_admin(user.username):
             await update.message.reply_text("У вас нет прав администратора.")
             return
@@ -326,8 +273,7 @@ class ProductSearchBot:
         stop_markup = ReplyKeyboardMarkup(stop_keyboard, resize_keyboard=True)
         
         status_message = await update.message.reply_text(
-            "🔍 Выполняется поиск...\n"
-            "⏳ Поиск в ГИСП...",
+            "🔍 Выполняется поиск...",
             reply_markup=stop_markup
         )
 
@@ -336,9 +282,7 @@ class ProductSearchBot:
                 return
 
             source = context.user_data.get('source', 'all')
-            
-            if user_id not in self.active_searches:
-                return
+            results = []
 
             if search_type == 'okpd2':
                 if source == 'gisp':
@@ -355,6 +299,7 @@ class ProductSearchBot:
                     await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
                     eaeu_results = self.scraper.search_eaeu(okpd2=query)
                     results = gisp_results + eaeu_results
+
             elif search_type == 'name':
                 if source == 'gisp':
                     await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
@@ -370,7 +315,8 @@ class ProductSearchBot:
                     await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
                     eaeu_results = self.scraper.search_eaeu(name=query)
                     results = gisp_results + eaeu_results
-            elif search_type == 'combined':
+
+                        elif search_type == 'combined':
                 try:
                     okpd2, name = [x.strip() for x in query.split(',', 1)]
                 except ValueError:
@@ -381,8 +327,10 @@ class ProductSearchBot:
                     await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
                     results = self.scraper.search_gisp(okpd2=okpd2, name=name)
                 elif source == 'eaeu':
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС
-                                        await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
+                    results = self.scraper.search_eaeu(okpd2=okpd2, name=name)
+                else:
+                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
                     gisp_results = self.scraper.search_gisp(okpd2=okpd2, name=name)
                     if user_id not in self.active_searches:
                         return
