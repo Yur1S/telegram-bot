@@ -174,11 +174,17 @@ class ProductSearchBot:
         self.file_update_status = status_message
 
         try:
+            logger.debug("Starting GISP file download process...")
+            await status_message.edit_text("⏳ Начало обновления файла ГИСП...\nПодключение к серверу...")
+            
             await self.scraper.download_gisp_file_with_status(self.file_update_status)
+            
+            logger.debug("GISP file download completed")
             await status_message.edit_text("✅ Файл ГИСП успешно обновлен!")
         except Exception as e:
-            logger.error(f"Manual GISP update error: {e}")
-            await status_message.edit_text("❌ Ошибка при обновлении файла ГИСП")
+            error_msg = str(e)
+            logger.error(f"Manual GISP update error: {error_msg}", exc_info=True)
+            await status_message.edit_text(f"❌ Ошибка при обновлении файла ГИСП:\n{error_msg[:200]}")
         finally:
             self.file_update_status = None
 
