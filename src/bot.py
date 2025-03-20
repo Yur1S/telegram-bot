@@ -187,20 +187,43 @@ class ProductSearchBot:
 
         try:
             logger.debug("Starting GISP file download process...")
+            await status_message.edit_text("⏳ Загрузка файла ГИСП...")
+            
             total_rows = await self.scraper.download_gisp_file_with_status(status_message)
             
-            if total_rows > 0:
-                logger.debug(f"GISP file download completed, processed {total_rows} rows")
-                await status_message.edit_text(
-                    f"✅ Файл ГИСП успешно обновлен!\n"
-                    f"📊 Обработано строк: {total_rows:,}"
-                )
-            else:
-                await status_message.edit_text("❌ Не удалось обновить файл ГИСП")
+            # Проверяем результаты обновления
+            if not os.path.exists(self.scraper.GISP_FILE_PATH):
+                raise Exception("CSV файл не был создан")
+                
+            if os.path.getsize(self.scraper.GISP_FILE_PATH) == 0:
+                raise Exception("CSV файл создан, но пуст")
+                
+            if total_rows <= 0:
+                raise Exception("Не было обработано ни одной строки")
+            
+            # Проверяем и удаляем временный файл
+            temp_file = self.scraper.TEMP_GISP_FILE
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                    logger.info("Temporary Excel file removed successfully")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary file: {e}")
+            
+            logger.debug(f"GISP file download completed, processed {total_rows} rows")
+            await status_message.edit_text(
+                f"✅ Файл ГИСП успешно обновлен!\n"
+                f"📊 Обработано строк: {total_rows:,}\n"
+                f"📁 Размер файла: {os.path.getsize(self.scraper.GISP_FILE_PATH) / (1024*1024):.1f} MB"
+            )
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Manual GISP update error: {error_msg}", exc_info=True)
-            await status_message.edit_text(f"❌ Ошибка при обновлении файла ГИСП:\n{error_msg[:200]}")
+            await status_message.edit_text(
+                f"❌ Ошибка при обновлении файла ГИСП:\n"
+                f"{error_msg[:200]}\n\n"
+                "Проверьте логи для получения дополнительной информации."
+            )
         finally:
             self.file_update_status = None
 
