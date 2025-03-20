@@ -20,6 +20,9 @@ class ProductScraper:
         self.GISP_FILE_PATH = "data/gisp_products.csv"
         self.last_update = None
         self.file_update_status = None
+        self.chunk_size = 50000
+        self.df_cache = None
+        self.search_index = {}  # Добавляем индекс для быстрого поиска
         
         os.makedirs(os.path.dirname(self.GISP_FILE_PATH), exist_ok=True)
         self.start_background_updates()
@@ -150,7 +153,10 @@ class ProductScraper:
                     f.write(response.content)
                 
                 logger.info("Processing GISP file...")
+                # Вариант для серверов с ограниченной памятью
+                chunk_size = 25000  # Оптимальный размер чанка
                 chunks = []
+                
                 for chunk in pd.read_excel(
                     temp_file,
                     usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
@@ -167,10 +173,11 @@ class ProductScraper:
                         'ОКПД2': str,
                         'ТН ВЭД': str
                     },
-                    chunksize=10000
+                    chunksize=chunk_size
                 ):
+                    chunk = chunk.dropna(how='all')
                     chunks.append(chunk)
-                    logger.info(f"Processed chunk, total rows: {len(chunks) * 10000}")
+                    await status_message.edit_text(f"⏳ Обработано строк: {len(chunks) * chunk_size}")
                 
                 df = pd.concat(chunks, ignore_index=True)
                 logger.info(f"Optimizing GISP data...")
@@ -179,73 +186,17 @@ class ProductScraper:
                 
                 # В методе download_gisp_file и download_gisp_file_with_status
                 logger.info("Saving GISP file...")
+                # Создаем индексы для поиска
+                df['_окпд2_lower'] = df['ОКПД2'].str.lower()
+                df['_name_lower'] = df['Наименование продукции'].str.lower()
+                
+                # Сохраняем с индексами
                 df.to_csv(self.GISP_FILE_PATH, index=False, encoding='utf-8-sig')
                 
-                # В методе search_gisp
-                # Читаем CSV с оптимизированными типами данных
-                df = pd.read_csv(
-                    self.GISP_FILE_PATH,
-                    encoding='utf-8-sig',  # Явно указываем кодировку при чтении
-                    dtype={
-                        'ИНН': str,
-                        'Реестровый номер': str,
-                        'ОКПД2': str,
-                        'ТН ВЭД': str
-                    }
-                )
-                
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-                
-                self.last_update = datetime.now()
-                logger.info(f"GISP file updated successfully at {self.last_update}")
-                
-        except Exception as e:
-            logger.error(f"Error downloading/optimizing GISP file: {e}")
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+                # Обновляем кэш и индексы
+                self.df_cache = df
+                self._update_search_index(df)
 
-    def update_scheduler(self):
-        while True:
-            schedule.run_pending()
-            time.sleep(3600)
-
-    def start_background_updates(self):
-        logger.info("Starting background updates scheduler...")
-        schedule.every().day.at("00:00").do(self.download_gisp_file)
-        thread = threading.Thread(target=self.update_scheduler, daemon=True)
-        thread.start()
-        logger.info("Background updates scheduler started")
-
-    async def search_gisp(self, okpd2: Optional[str] = None, name: Optional[str] = None, status_message=None) -> List[Dict]:
-        try:
-            logger.info(f"Starting GISP search with okpd2={okpd2}, name={name}")
-            if status_message:
-                await status_message.edit_text("🔍 Начинаем поиск в ГИСП...")
-
-            if not os.path.exists(self.GISP_FILE_PATH):
-                if status_message:
-                    await status_message.edit_text("⏳ Файл ГИСП не найден, загружаем...")
-                logger.warning("GISP file not found, downloading...")
-                self.download_gisp_file()
-                if not os.path.exists(self.GISP_FILE_PATH):
-                    logger.error("Failed to download GISP file")
-                    if status_message:
-                        await status_message.edit_text("❌ Ошибка: не удалось загрузить файл ГИСП")
-                    return []
-
-            # Читаем CSV с оптимизированными типами данных
-            df = pd.read_csv(
-                self.GISP_FILE_PATH,
-                encoding='utf-8-sig',
-                dtype={
-                    'ИНН': str,
-                    'Реестровый номер': str,
-                    'ОКПД2': str,
-                    'ТН ВЭД': str
-                }
-            )
-            
             total_rows = len(df)  # Определяем общее количество строк
             
             if status_message:
@@ -424,4 +375,115 @@ class ProductScraper:
                     f"❌ Ошибка при поиске: {str(e)}\n\n"
                     f"Используйте /start для нового поиска"
                 )
+            return []
+
+    def _update_search_index(self, df):
+        """Создает индексы для быстрого поиска"""
+        logger.info("Updating search indexes...")
+        self.search_index = {
+            'okpd2': {},
+            'name': set()
+        }
+        
+        # Индекс для ОКПД2
+        for idx, code in enumerate(df['ОКПД2']):
+            if pd.notna(code):
+                code = str(code).lower()
+                for i in range(len(code)):
+                    prefix = code[:i+1]
+                    if prefix not in self.search_index['okpd2']:
+                        self.search_index['okpd2'][prefix] = set()
+                    self.search_index['okpd2'][prefix].add(idx)
+        
+        # Индекс для наименований
+        self.search_index['name'] = set(df['Наименование продукции'].str.lower().dropna())
+        logger.info("Search indexes updated successfully")
+
+    async def search_gisp(self, okpd2: Optional[str] = None, name: Optional[str] = None, status_message=None) -> List[Dict]:
+        try:
+            if status_message:
+                await status_message.edit_text("🔍 Начинаем поиск в ГИСП...")
+
+            # Используем кэш, если он есть
+            if self.df_cache is None:
+                if status_message:
+                    await status_message.edit_text("📖 Загрузка базы данных...")
+                
+                self.df_cache = pd.read_csv(
+                    self.GISP_FILE_PATH,
+                    encoding='utf-8-sig',
+                    dtype={
+                        'ИНН': str,
+                        'Реестровый номер': str,
+                        'ОКПД2': str,
+                        'ТН ВЭД': str
+                    }
+                )
+                self._update_search_index(self.df_cache)
+
+            df = self.df_cache
+            total_rows = len(df)
+
+            if status_message:
+                await status_message.edit_text("🔍 Применение фильтров...")
+
+            # Используем индексы для быстрого поиска
+            if okpd2 and name:
+                okpd2_lower = okpd2.lower()
+                name_lower = name.lower()
+                
+                # Поиск по ОКПД2
+                potential_indices = self.search_index['okpd2'].get(okpd2_lower, set())
+                mask = df.index.isin(potential_indices)
+                
+                # Дополнительная фильтрация по наименованию
+                name_mask = df['Наименование продукции'].str.lower().str.contains(name_lower, na=False)
+                mask = mask & name_mask
+                
+            elif okpd2:
+                okpd2_lower = okpd2.lower()
+                potential_indices = self.search_index['okpd2'].get(okpd2_lower, set())
+                mask = df.index.isin(potential_indices)
+                
+            elif name:
+                name_lower = name.lower()
+                mask = df['Наименование продукции'].str.lower().str.contains(name_lower, na=False)
+            else:
+                return []
+
+            # Получаем результаты
+            results = df[mask].to_dict('records')
+
+            if status_message:
+                await status_message.edit_text("📊 Форматирование результатов...")
+            
+            # Преобразуем результаты в нужный формат
+            formatted_results = [{
+                'name': row['Наименование продукции'],
+                'okpd2_code': row['ОКПД2'],
+                'manufacturer': row['Предприятие'],
+                'inn': row['ИНН'],
+                'registry_number': row['Реестровый номер'],
+                'registry_date': row['Дата внесения в реестр'],
+                'valid_until': row['Срок действия'],
+                'tn_ved': row['ТН ВЭД'],
+                'standard': row['Изготовлена по'],
+                'source': 'ГИСП'
+            } for row in results]
+
+            if status_message:
+                found_count = len(formatted_results)
+                await status_message.edit_text(
+                    f"✅ Поиск завершен\n"
+                    f"📊 Найдено результатов: {found_count}\n"
+                    f"💾 Всего записей в базе: {total_rows}"
+                )
+
+            logger.info(f"GISP search completed, found {len(formatted_results)} results")
+            return formatted_results
+
+        except Exception as e:
+            logger.error(f"GISP search error: {e}")
+            if status_message:
+                await status_message.edit_text(f"❌ Ошибка при поиске: {str(e)}")
             return []
