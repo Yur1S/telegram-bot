@@ -33,9 +33,26 @@ class ProductScraper:
         try:
             logger.info("Starting GISP file download with status updates...")
             await status_message.edit_text("⏳ Скачивание файла ГИСП...")
-            response = requests.get(self.GISP_EXCEL_URL)
-            response.raise_for_status()
             
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+            }
+            
+            response = requests.get(self.GISP_EXCEL_URL, headers=headers, verify=True, timeout=30)
+            
+            if response.status_code != 200:
+                logger.error(f"GISP server returned status code: {response.status_code}")
+                raise Exception(f"Server returned status code: {response.status_code}")
+                
+            content_type = response.headers.get('content-type', '')
+            if 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' not in content_type:
+                logger.error(f"Unexpected content type: {content_type}")
+                raise Exception(f"Unexpected content type: {content_type}")
+
             temp_file = "data/temp_gisp.xlsx"
             with open(temp_file, 'wb') as f:
                 f.write(response.content)
