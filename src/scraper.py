@@ -196,15 +196,25 @@ class ProductScraper:
         thread.start()
         logger.info("Background updates scheduler started")
 
-    def search_gisp(self, okpd2: Optional[str] = None, name: Optional[str] = None) -> List[Dict]:
+    async def search_gisp(self, okpd2: Optional[str] = None, name: Optional[str] = None, status_message=None) -> List[Dict]:
         try:
             logger.info(f"Starting GISP search with okpd2={okpd2}, name={name}")
+            if status_message:
+                await status_message.edit_text("🔍 Начинаем поиск в ГИСП...")
+
             if not os.path.exists(self.GISP_FILE_PATH):
+                if status_message:
+                    await status_message.edit_text("⏳ Файл ГИСП не найден, загружаем...")
                 logger.warning("GISP file not found, downloading...")
                 self.download_gisp_file()
                 if not os.path.exists(self.GISP_FILE_PATH):
                     logger.error("Failed to download GISP file")
+                    if status_message:
+                        await status_message.edit_text("❌ Ошибка: не удалось загрузить файл ГИСП")
                     return []
+
+            if status_message:
+                await status_message.edit_text("📖 Чтение базы данных...")
 
             # Читаем CSV с оптимизированными типами данных
             df = pd.read_csv(
@@ -217,6 +227,11 @@ class ProductScraper:
                 }
             )
             
+            if status_message:
+                await status_message.edit_text("🔍 Выполняем поиск...")
+
+            total_rows = len(df)
+            
             # Предварительно конвертируем строки поиска
             if name:
                 name = name.lower()
@@ -225,20 +240,24 @@ class ProductScraper:
             
             # Создаем маску для поиска с оптимизацией
             if okpd2 and name:
-                # Предварительно создаем временные столбцы для поиска
+                if status_message:
+                    await status_message.edit_text("🔍 Поиск по ОКПД2 и наименованию...")
                 df['_окпд2_lower'] = df['ОКПД2'].str.lower()
                 df['_name_lower'] = df['Наименование продукции'].str.lower()
                 mask = (
                     df['_окпд2_lower'].str.contains(okpd2, na=False) &
                     df['_name_lower'].str.contains(name, na=False)
                 )
-                # Удаляем временные столбцы
                 df.drop(['_окпд2_lower', '_name_lower'], axis=1, inplace=True)
             elif okpd2:
+                if status_message:
+                    await status_message.edit_text("🔍 Поиск по ОКПД2...")
                 df['_окпд2_lower'] = df['ОКПД2'].str.lower()
                 mask = df['_окпд2_lower'].str.contains(okpd2, na=False)
                 df.drop(['_окпд2_lower'], axis=1, inplace=True)
             elif name:
+                if status_message:
+                    await status_message.edit_text("🔍 Поиск по наименованию...")
                 df['_name_lower'] = df['Наименование продукции'].str.lower()
                 mask = df['_name_lower'].str.contains(name, na=False)
                 df.drop(['_name_lower'], axis=1, inplace=True)
@@ -247,6 +266,9 @@ class ProductScraper:
 
             # Применяем маску и конвертируем в список словарей
             results = df[mask].to_dict('records')
+            
+            if status_message:
+                await status_message.edit_text("📊 Форматирование результатов...")
             
             # Преобразуем результаты в нужный формат
             formatted_results = [{
@@ -262,11 +284,21 @@ class ProductScraper:
                 'source': 'ГИСП'
             } for row in results]
 
+            if status_message:
+                found_count = len(formatted_results)
+                await status_message.edit_text(
+                    f"✅ Поиск завершен\n"
+                    f"📊 Найдено результатов: {found_count}\n"
+                    f"💾 Всего записей в базе: {total_rows}"
+                )
+
             logger.info(f"GISP search completed, found {len(formatted_results)} results")
             return formatted_results
 
         except Exception as e:
             logger.error(f"GISP search error: {e}")
+            if status_message:
+                await status_message.edit_text(f"❌ Ошибка при поиске: {str(e)}")
             return []
 
     def search_eaeu(self, okpd2: Optional[str] = None, name: Optional[str] = None) -> List[Dict]:
@@ -316,10 +348,26 @@ class ProductScraper:
             logger.error(f"EAEU API search error: {e}")
             return []
 
-    def search_all(self, okpd2: Optional[str] = None, name: Optional[str] = None) -> List[Dict]:
+    async def search_all(self, okpd2: Optional[str] = None, name: Optional[str] = None, status_message=None) -> List[Dict]:
         logger.info(f"Starting combined search with okpd2={okpd2}, name={name}")
+        
+        if status_message:
+            await status_message.edit_text("🔍 Поиск в ЕАЭС...")
         eaeu_results = self.search_eaeu(okpd2, name)
-        gisp_results = self.search_gisp(okpd2, name)
+        
+        if status_message:
+            await status_message.edit_text("🔍 Поиск в ГИСП...")
+        gisp_results = await self.search_gisp(okpd2, name, status_message)
+        
         total_results = eaeu_results + gisp_results
+        
+        if status_message:
+            await status_message.edit_text(
+                f"✅ Поиск завершен\n"
+                f"📊 Всего найдено: {len(total_results)}\n"
+                f"ЕАЭС: {len(eaeu_results)}\n"
+                f"ГИСП: {len(gisp_results)}"
+            )
+        
         logger.info(f"Combined search completed, total results: {len(total_results)}")
         return total_results
