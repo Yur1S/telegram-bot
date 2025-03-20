@@ -15,13 +15,12 @@ class ProductScraper:
     def __init__(self):
         self.EAEU_API_URL = "https://goszakupki.eaeunion.org/spd/find"
         self.GISP_EXCEL_URL = "https://gisp.gov.ru/pp719v2/mptapp/view/dl/production_res_valid_only/"
-        self.GISP_FILE_PATH = "data/gisp_products.xlsx"
+        self.GISP_FILE_PATH = "data/gisp_products.csv"
         self.last_update = None
         
         os.makedirs(os.path.dirname(self.GISP_FILE_PATH), exist_ok=True)
         self.start_background_updates()
         
-        # Проверяем наличие файла при инициализации
         if not os.path.exists(self.GISP_FILE_PATH):
             self.download_gisp_file()
 
@@ -30,34 +29,43 @@ class ProductScraper:
             response = requests.get(self.GISP_EXCEL_URL)
             response.raise_for_status()
             
-            if os.path.exists(self.GISP_FILE_PATH):
-                os.remove(self.GISP_FILE_PATH)
-            
-            temp_file = self.GISP_FILE_PATH + '.temp'
+            temp_file = "data/temp_gisp.xlsx"
             with open(temp_file, 'wb') as f:
                 f.write(response.content)
             
             df = pd.read_excel(
                 temp_file,
-                usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],  # A,B,G,I,J,L,M,N,O columns
+                usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
                 skiprows=2,
                 names=[
                     'Предприятие', 'ИНН', 'Реестровый номер', 
                     'Дата внесения в реестр', 'Срок действия',
                     'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
-                ]
+                ],
+                engine='openpyxl',
+                dtype={
+                    'ИНН': str,
+                    'Реестровый номер': str,
+                    'ОКПД2': str,
+                    'ТН ВЭД': str
+                }
             )
             
             df = df.dropna(how='all')
-            df.to_excel(self.GISP_FILE_PATH, index=False)
+            df = df.reset_index(drop=True)
             
-            os.remove(temp_file)
+            df.to_csv(self.GISP_FILE_PATH, index=False)
+            
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
             
             self.last_update = datetime.now()
-            logger.info(f"GISP Excel file updated and optimized successfully at {self.last_update}")
+            logger.info(f"GISP file updated and optimized successfully at {self.last_update}")
             
         except Exception as e:
             logger.error(f"Error downloading/optimizing GISP file: {e}")
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
 
     def update_scheduler(self):
         while True:
@@ -72,13 +80,13 @@ class ProductScraper:
     def search_gisp(self, okpd2: Optional[str] = None, name: Optional[str] = None) -> List[Dict]:
         try:
             if not os.path.exists(self.GISP_FILE_PATH):
-                logger.warning("GISP Excel file not found, downloading...")
+                logger.warning("GISP file not found, downloading...")
                 self.download_gisp_file()
                 if not os.path.exists(self.GISP_FILE_PATH):
                     logger.error("Failed to download GISP file")
                     return []
 
-            df = pd.read_excel(self.GISP_FILE_PATH)
+            df = pd.read_csv(self.GISP_FILE_PATH)
             
             if name:
                 name = name.lower()
@@ -112,20 +120,18 @@ class ProductScraper:
                     'standard': row['Изготовлена по'],
                     'source': 'ГИСП'
                 })
-                if len(results) >= 100:
-                    break
 
             return results
 
         except Exception as e:
-            logger.error(f"GISP Excel search error: {e}")
+            logger.error(f"GISP search error: {e}")
             return []
 
     def search_eaeu(self, okpd2: Optional[str] = None, name: Optional[str] = None) -> List[Dict]:
         try:
             params = {
                 "collection": "db1.v_goodscollection_prod_public",
-                "limit": 100,
+                "limit": 1000,
                 "skip": 0,
                 "sort": {"publishdate": -1}
             }
