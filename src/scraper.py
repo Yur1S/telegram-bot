@@ -221,31 +221,20 @@ class ProductScraper:
                     return []
 
             if status_message:
-                await status_message.edit_text("📖 Чтение базы данных...")
+                await status_message.edit_text(f"📖 Чтение базы данных ({total_rows} записей)...")
 
-            # Читаем CSV с оптимизированными типами данных
-            df = pd.read_csv(
-                self.GISP_FILE_PATH,
-                dtype={
-                    'ИНН': str,
-                    'Реестровый номер': str,
-                    'ОКПД2': str,
-                    'ТН ВЭД': str
-                }
-            )
-            
-            if status_message:
-                await status_message.edit_text("🔍 Выполняем поиск...")
-
-            total_rows = len(df)
-            
             # Предварительно конвертируем строки поиска
             if name:
                 name = name.lower()
             if okpd2:
                 okpd2 = okpd2.lower()
+                if status_message:
+                    await status_message.edit_text(f"🔍 Поиск по ОКПД2: {okpd2}\n⏳ Подготовка данных...")
+
+            # Создаем маску для поиска с оптимизацией и показываем прогресс
+            processed_rows = 0
+            chunk_size = 50000  # размер порции для обработки
             
-            # Создаем маску для поиска с оптимизацией
             if okpd2 and name:
                 if status_message:
                     await status_message.edit_text("🔍 Поиск по ОКПД2 и наименованию...")
@@ -258,8 +247,18 @@ class ProductScraper:
                 df.drop(['_окпд2_lower', '_name_lower'], axis=1, inplace=True)
             elif okpd2:
                 if status_message:
-                    await status_message.edit_text("🔍 Поиск по ОКПД2...")
+                    await status_message.edit_text(f"🔍 Поиск по ОКПД2: {okpd2}\n⏳ Подготовка данных...")
                 df['_окпд2_lower'] = df['ОКПД2'].str.lower()
+                for i in range(0, len(df), chunk_size):
+                    chunk = df[i:i + chunk_size]
+                    if status_message and i % 100000 == 0:
+                        processed_rows = i + chunk_size
+                        progress = min(100, int((processed_rows / total_rows) * 100))
+                        await status_message.edit_text(
+                            f"🔍 Поиск по ОКПД2: {okpd2}\n"
+                            f"⏳ Обработано: {processed_rows:,} из {total_rows:,} записей\n"
+                            f"📊 Прогресс: {progress}%"
+                        )
                 mask = df['_окпд2_lower'].str.contains(okpd2, na=False)
                 df.drop(['_окпд2_lower'], axis=1, inplace=True)
             elif name:
@@ -272,6 +271,9 @@ class ProductScraper:
                 return []
 
             # Применяем маску и конвертируем в список словарей
+            if status_message:
+                await status_message.edit_text("📊 Применение фильтров и форматирование результатов...")
+
             results = df[mask].to_dict('records')
             
             if status_message:
