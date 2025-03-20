@@ -150,18 +150,30 @@ class ProductSearchBot:
             logger.error(f"Error in start handler: {e}", exc_info=True)
 
     async def stop_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        logger.debug(f"Stop search for user {update.effective_user.username}")
-        if user_id in self.active_searches:
-            self.active_searches.remove(user_id)
-            context.user_data.clear()
-            await update.message.reply_text(
-                "🛑 Поиск остановлен. Выберите тип нового поиска:", 
-                reply_markup=ReplyKeyboardRemove()
-            )
-            await self.start(update, context)
-        else:
-            await update.message.reply_text("Нет активного поиска для остановки.")
+        try:
+            user_id = update.effective_user.id
+            logger.debug(f"Stop search requested for user {update.effective_user.username}")
+            
+            if user_id in self.active_searches:
+                self.active_searches.remove(user_id)
+                context.user_data.clear()
+                
+                # Удаляем клавиатуру и отправляем сообщение
+                reply_markup = ReplyKeyboardRemove()
+                await update.message.reply_text(
+                    "🛑 Поиск остановлен",
+                    reply_markup=reply_markup
+                )
+                # Возвращаемся к начальному меню
+                await self.start(update, context)
+            else:
+                await update.message.reply_text(
+                    "❌ Нет активного поиска для остановки\n"
+                    "Используйте /start для начала нового поиска"
+                )
+        except Exception as e:
+            logger.error(f"Error in stop_search: {e}")
+            await update.message.reply_text("❌ Произошла ошибка при остановке поиска")
 
     async def update_gisp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
