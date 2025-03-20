@@ -69,10 +69,11 @@ class ProductScraper:
             try:
                 logger.info(f"Starting Excel processing, file size: {os.path.getsize(temp_file)} bytes")
                 
-                # Проверяем существование директории
-                os.makedirs('data', exist_ok=True)
+                # Читаем Excel файл по частям
+                chunk_size = 10000  # количество строк в одной части
+                chunks = []
                 
-                df = pd.read_excel(
+                for chunk in pd.read_excel(
                     temp_file,
                     usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
                     skiprows=2,
@@ -87,9 +88,16 @@ class ProductScraper:
                         'Реестровый номер': str,
                         'ОКПД2': str,
                         'ТН ВЭД': str
-                    }
-                )
-                logger.info(f"Excel file loaded, rows: {len(df)}")
+                    },
+                    chunksize=chunk_size
+                ):
+                    chunks.append(chunk)
+                    logger.info(f"Processed chunk of {len(chunk)} rows")
+                    await status_message.edit_text(f"⏳ Обработка файла Excel... ({len(chunks) * chunk_size} строк)")
+                
+                # Объединяем все части
+                df = pd.concat(chunks, ignore_index=True)
+                logger.info(f"Excel file loaded, total rows: {len(df)}")
                 
                 await status_message.edit_text("⏳ Оптимизация данных...")
                 df = df.dropna(how='all')
