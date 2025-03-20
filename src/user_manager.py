@@ -1,42 +1,98 @@
 import json
+import logging
 import os
-from typing import List, Dict
+
+logger = logging.getLogger(__name__)
 
 class UserManager:
-    def __init__(self, users_file: str = 'allowed_users.json'):
-        self.users_file = users_file
+    def __init__(self):
+        self.users_file = 'data/users.json'
         self.allowed_users = self._load_users()
-        
-    def _load_users(self) -> Dict:
-        if os.path.exists(self.users_file):
-            with open(self.users_file, 'r') as f:
-                return json.load(f)
-        return {"usernames": [], "phone_numbers": [], "admins": []}
-        
-    def _save_users(self):
-        with open(self.users_file, 'w') as f:
-            json.dump(self.allowed_users, f, indent=4)
+        logger.debug(f"UserManager initialized with users: {self.allowed_users}")
+
+    def _load_users(self) -> dict:
+        try:
+            if not os.path.exists(self.users_file):
+                logger.debug("Users file not found, creating default structure")
+                default_users = {"admins": [], "usernames": []}
+                self._save_users(default_users)
+                return default_users
             
-    def is_allowed(self, username: str = None, phone: str = None) -> bool:
-        if username in self.allowed_users["usernames"]:
-            return True
-        if phone in self.allowed_users["phone_numbers"]:
-            return True
-        return False
-        
+            with open(self.users_file, 'r', encoding='utf-8') as f:
+                users = json.load(f)
+                logger.debug(f"Loaded users from file: {users}")
+                return users
+        except Exception as e:
+            logger.error(f"Error loading users: {e}", exc_info=True)
+            return {"admins": [], "usernames": []}
+
+    def _save_users(self, users=None):
+        try:
+            if users is None:
+                users = self.allowed_users
+            
+            os.makedirs(os.path.dirname(self.users_file), exist_ok=True)
+            with open(self.users_file, 'w', encoding='utf-8') as f:
+                json.dump(users, f, ensure_ascii=False, indent=2)
+            logger.debug(f"Users saved successfully: {users}")
+        except Exception as e:
+            logger.error(f"Error saving users: {e}", exc_info=True)
+
     def is_admin(self, username: str) -> bool:
-        return username in self.allowed_users["admins"]
-        
-    def add_user(self, username: str = None, phone: str = None):
-        if username and username not in self.allowed_users["usernames"]:
-            self.allowed_users["usernames"].append(username)
-        if phone and phone not in self.allowed_users["phone_numbers"]:
-            self.allowed_users["phone_numbers"].append(phone)
-        self._save_users()
-        
-    def remove_user(self, username: str = None, phone: str = None):
-        if username and username in self.allowed_users["usernames"]:
-            self.allowed_users["usernames"].remove(username)
-        if phone and phone in self.allowed_users["phone_numbers"]:
-            self.allowed_users["phone_numbers"].remove(phone)
-        self._save_users()
+        if not username:
+            return False
+        return username in self.allowed_users.get("admins", [])
+
+    def is_allowed(self, username: str) -> bool:
+        if not username:
+            return False
+        return (username in self.allowed_users.get("usernames", []) or 
+                username in self.allowed_users.get("admins", []))
+
+    def add_user(self, username: str):
+        try:
+            if not username:
+                logger.warning("Attempted to add empty username")
+                return
+            
+            if username not in self.allowed_users["usernames"]:
+                self.allowed_users["usernames"].append(username)
+                self._save_users()
+                logger.info(f"User {username} added successfully")
+            else:
+                logger.debug(f"User {username} already exists")
+        except Exception as e:
+            logger.error(f"Error adding user {username}: {e}", exc_info=True)
+
+    def remove_user(self, username: str):
+        try:
+            if not username:
+                logger.warning("Attempted to remove empty username")
+                return
+            
+            if username in self.allowed_users["usernames"]:
+                self.allowed_users["usernames"].remove(username)
+                self._save_users()
+                logger.info(f"User {username} removed successfully")
+            else:
+                logger.debug(f"User {username} not found in allowed users")
+        except Exception as e:
+            logger.error(f"Error removing user {username}: {e}", exc_info=True)
+
+    def get_all_users(self) -> list:
+        try:
+            all_users = (
+                self.allowed_users.get("usernames", []) + 
+                self.allowed_users.get("admins", [])
+            )
+            return list(set(all_users))  # Remove duplicates
+        except Exception as e:
+            logger.error(f"Error getting all users: {e}", exc_info=True)
+            return []
+
+    def get_admins(self) -> list:
+        try:
+            return self.allowed_users.get("admins", [])
+        except Exception as e:
+            logger.error(f"Error getting admins: {e}", exc_info=True)
+            return []
