@@ -67,6 +67,11 @@ class ProductScraper:
             # Этап 2: Обработка файла
             await status_message.edit_text("⏳ Обработка файла Excel...")
             try:
+                logger.info(f"Starting Excel processing, file size: {os.path.getsize(temp_file)} bytes")
+                
+                # Проверяем существование директории
+                os.makedirs('data', exist_ok=True)
+                
                 df = pd.read_excel(
                     temp_file,
                     usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
@@ -84,20 +89,29 @@ class ProductScraper:
                         'ТН ВЭД': str
                     }
                 )
+                logger.info(f"Excel file loaded, rows: {len(df)}")
                 
                 await status_message.edit_text("⏳ Оптимизация данных...")
                 df = df.dropna(how='all')
                 df = df.reset_index(drop=True)
+                logger.info(f"Data optimized, final rows: {len(df)}")
                 
-                # Сохраняем в CSV
+                # Сохраняем в CSV с проверкой
                 await status_message.edit_text("⏳ Сохранение в CSV...")
-                df.to_csv(self.GISP_FILE_PATH, index=False)
+                csv_path = self.GISP_FILE_PATH
+                df.to_csv(csv_path, index=False)
+                
+                if not os.path.exists(csv_path):
+                    raise Exception(f"CSV file was not created at {csv_path}")
+                
+                logger.info(f"CSV file saved successfully at {csv_path}, size: {os.path.getsize(csv_path)} bytes")
+                await status_message.edit_text("✅ Файл ГИСП успешно обновлен!")
                 
                 self.last_update = datetime.now()
-                logger.info(f"CSV file created successfully at {self.last_update}")
                 
             except Exception as e:
-                logger.error(f"Excel processing failed: {str(e)}")
+                logger.error(f"Excel processing failed: {str(e)}", exc_info=True)
+                await status_message.edit_text(f"❌ Ошибка при обработке файла: {str(e)}")
                 raise Exception(f"Failed to process Excel file: {str(e)}")
             
             finally:
