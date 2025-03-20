@@ -51,8 +51,12 @@ HELP_MESSAGE = """
    - Введите код ОКПД2 и название через запятую
    - Пример: 26.20.11, компьютер
 
+Источники поиска:
+- 🌐 Везде (ГИСП + ЕАЭС)
+- 📊 ГИСП
+- 🔄 ЕАЭС
+
 Дополнительно:
-- Поиск осуществляется по базам ГИСП и ЕАЭС
 - Результаты предоставляются в формате Excel
 - В любой момент можно остановить поиск кнопкой "🛑 Остановить поиск"
 
@@ -61,6 +65,12 @@ HELP_MESSAGE = """
 /admin remove username - Удалить пользователя
 /admin list - Список пользователей
 """
+
+SEARCH_SOURCES = {
+    'all': 'Везде',
+    'gisp': 'ГИСП',
+    'eaeu': 'ЕАЭС'
+}
 
 class ProductSearchBot:
     def __init__(self):
@@ -111,8 +121,9 @@ class ProductSearchBot:
         user_id = update.effective_user.id
         if user_id in self.active_searches:
             self.active_searches.remove(user_id)
+            context.user_data.clear()
             await update.message.reply_text(
-                "Поиск остановлен. Выберите тип нового поиска:", 
+                "🛑 Поиск остановлен. Выберите тип нового поиска:", 
                 reply_markup=ReplyKeyboardRemove()
             )
             await self.start(update, context)
@@ -163,15 +174,23 @@ class ProductSearchBot:
         query = update.callback_query
         await query.answer()
         
-        if query.data == 'search_okpd2':
-            await query.message.reply_text("Введите код ОКПД2:")
-            context.user_data['search_type'] = 'okpd2'
-        elif query.data == 'search_name':
-            await query.message.reply_text("Введите наименование продукции:")
-            context.user_data['search_type'] = 'name'
-        elif query.data == 'search_combined':
-            await query.message.reply_text("Введите код ОКПД2 и наименование через запятую:")
-            context.user_data['search_type'] = 'combined'
+        if query.data.startswith('search_'):
+            context.user_data['search_type'] = query.data.replace('search_', '')
+            keyboard = [
+                [InlineKeyboardButton(name, callback_data=f'source_{key}')]
+                for key, name in SEARCH_SOURCES.items()
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text("Выберите источник поиска:", reply_markup=reply_markup)
+        elif query.data.startswith('source_'):
+            context.user_data['source'] = query.data.replace('source_', '')
+            search_type = context.user_data['search_type']
+            if search_type == 'okpd2':
+                await query.message.reply_text("Введите код ОКПД2:")
+            elif search_type == 'name':
+                await query.message.reply_text("Введите наименование продукции:")
+            elif search_type == 'combined':
+                await query.message.reply_text("Введите код ОКПД2 и наименование через запятую:")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_access(update):
@@ -192,6 +211,11 @@ class ProductSearchBot:
         search_type = context.user_data['search_type']
         query = update.message.text
         user_id = update.effective_user.id
+        
+        if user_id in self.active_searches:
+            await update.message.reply_text("Поиск уже выполняется. Дождитесь результатов или остановите текущий поиск.")
+            return
+            
         self.active_searches.add(user_id)
 
         stop_keyboard = [[KeyboardButton("🛑 Остановить поиск")]]
@@ -202,13 +226,33 @@ class ProductSearchBot:
             if user_id not in self.active_searches:
                 return
 
+            source = context.user_data.get('source', 'all')
+            
+            if user_id not in self.active_searches:
+                return
+
             if search_type == 'okpd2':
-                results = self.scraper.search_all(okpd2=query)
+                if source == 'gisp':
+                    results = self.scraper.search_gisp(okpd2=query)
+                elif source == 'eaeu':
+                    results = self.scraper.search_eaeu(okpd2=query)
+                else:
+                    results = self.scraper.search_all(okpd2=query)
             elif search_type == 'name':
-                results = self.scraper.search_all(name=query)
+                if source == 'gisp':
+                    results = self.scraper.search_gisp(name=query)
+                elif source == 'eaeu':
+                    results = self.scraper.search_eaeu(name=query)
+                else:
+                    results = self.scraper.search_all(name=query)
             elif search_type == 'combined':
                 okpd2, name = [x.strip() for x in query.split(',', 1)]
-                results = self.scraper.search_all(okpd2=okpd2, name=name)
+                if source == 'gisp':
+                    results = self.scraper.search_gisp(okpd2=okpd2, name=name)
+                elif source == 'eaeu':
+                    results = self.scraper.search_eaeu(okpd2=okpd2, name=name)
+                else:
+                    results = self.scraper.search_all(okpd2=okpd2, name=name)
 
             if user_id not in self.active_searches:
                 return
@@ -219,6 +263,9 @@ class ProductSearchBot:
                     reply_markup=ReplyKeyboardRemove()
                 )
                 await self.start(update, context)
+                return
+
+            if user_id not in self.active_searches:
                 return
 
             excel_report = self.report_generator.generate_excel_report(results)
@@ -240,7 +287,7 @@ class ProductSearchBot:
         finally:
             if user_id in self.active_searches:
                 self.active_searches.remove(user_id)
-            context.user_data.pop('search_type', None)
+            context.user_data.clear()
 
     def run(self):
         try:
