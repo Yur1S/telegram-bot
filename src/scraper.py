@@ -12,7 +12,7 @@ import threading
 logger = logging.getLogger(__name__)
 
 class ProductScraper:
-    def __init__(self, chrome_options=None):
+    def __init__(self):
         self.EAEU_API_URL = "https://goszakupki.eaeunion.org/spd/find"
         self.GISP_EXCEL_URL = "https://gisp.gov.ru/pp719v2/mptapp/view/dl/production_res_valid_only/"
         self.GISP_FILE_PATH = "data/gisp_products.xlsx"
@@ -92,7 +92,7 @@ class ProductScraper:
                         'name': row['Наименование продукции'],
                         'okpd2_code': row['ОКПД2'],
                         'manufacturer': '',
-                        'source': 'GISP'
+                        'source': 'ГИСП'
                     })
 
                 del chunk
@@ -137,7 +137,7 @@ class ProductScraper:
                     'okpd2_name': item.get('okpd2', {}).get('name', ''),
                     'manufacturer': item.get('manufacturer', {}).get('name', ''),
                     'publish_date': item.get('publishdate', ''),
-                    'source': 'EAEU'
+                    'source': 'ЕАЭС'
                 }
                 results.append(result)
             
