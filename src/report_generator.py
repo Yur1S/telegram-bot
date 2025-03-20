@@ -39,11 +39,37 @@ class ReportGenerator:
                 
                 worksheet = writer.sheets['Результаты поиска']
                 for idx, col in enumerate(df.columns):
+                    # Автоматическая настройка ширины столбцов
                     max_length = max(
                         df[col].astype(str).apply(len).max(),
                         len(str(col))
                     ) + 2
                     worksheet.set_column(idx, idx, max_length)
+                
+                # Форматирование заголовков
+                header_format = writer.book.add_format({
+                    'bold': True,
+                    'text_wrap': True,
+                    'valign': 'top',
+                    'align': 'center',
+                    'border': 1
+                })
+                
+                # Применяем форматирование к заголовкам
+                for col_num, value in enumerate(df.columns.values):
+                    worksheet.write(0, col_num, value, header_format)
+                
+                # Форматирование данных
+                data_format = writer.book.add_format({
+                    'text_wrap': True,
+                    'valign': 'top',
+                    'border': 1
+                })
+                
+                # Применяем форматирование к данным
+                for row in range(len(df)):
+                    for col in range(len(df.columns)):
+                        worksheet.write(row + 1, col, df.iloc[row, col], data_format)
             
             output.seek(0)
             return output

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import schedule
 import time
 import threading
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ class ProductScraper:
         self.GISP_EXCEL_URL = "https://gisp.gov.ru/pp719v2/mptapp/view/dl/production_res_valid_only/"
         self.GISP_FILE_PATH = "data/gisp_products.csv"
         self.last_update = None
+        self.file_update_status = None
         
         os.makedirs(os.path.dirname(self.GISP_FILE_PATH), exist_ok=True)
         self.start_background_updates()
@@ -24,8 +26,9 @@ class ProductScraper:
         if not os.path.exists(self.GISP_FILE_PATH):
             self.download_gisp_file()
 
-    def download_gisp_file(self):
+    async def download_gisp_file_with_status(self, status_message):
         try:
+            await status_message.edit_text("⏳ Скачивание файла ГИСП...")
             response = requests.get(self.GISP_EXCEL_URL)
             response.raise_for_status()
             
@@ -33,6 +36,7 @@ class ProductScraper:
             with open(temp_file, 'wb') as f:
                 f.write(response.content)
             
+            await status_message.edit_text("⏳ Обработка файла...")
             df = pd.read_excel(
                 temp_file,
                 usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
@@ -51,9 +55,11 @@ class ProductScraper:
                 }
             )
             
+            await status_message.edit_text("⏳ Оптимизация данных...")
             df = df.dropna(how='all')
             df = df.reset_index(drop=True)
             
+            await status_message.edit_text("⏳ Сохранение файла...")
             df.to_csv(self.GISP_FILE_PATH, index=False)
             
             if os.path.exists(temp_file):
@@ -62,6 +68,53 @@ class ProductScraper:
             self.last_update = datetime.now()
             logger.info(f"GISP file updated and optimized successfully at {self.last_update}")
             
+        except Exception as e:
+            logger.error(f"Error downloading/optimizing GISP file: {e}")
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise e
+
+    def download_gisp_file(self):
+        try:
+            if self.file_update_status:
+                asyncio.run(self.download_gisp_file_with_status(self.file_update_status))
+            else:
+                response = requests.get(self.GISP_EXCEL_URL)
+                response.raise_for_status()
+                
+                temp_file = "data/temp_gisp.xlsx"
+                with open(temp_file, 'wb') as f:
+                    f.write(response.content)
+                
+                df = pd.read_excel(
+                    temp_file,
+                    usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
+                    skiprows=2,
+                    names=[
+                        'Предприятие', 'ИНН', 'Реестровый номер', 
+                        'Дата внесения в реестр', 'Срок действия',
+                        'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
+                    ],
+                    engine='openpyxl',
+                    dtype={
+                        'ИНН': str,
+                        'Реестровый номер': str,
+                        'ОКПД2': str,
+                        'ТН ВЭД': str
+                    }
+                )
+                
+                df = df.dropna(how='all')
+                df = df.reset_index(drop=True)
+                
+                df.to_csv(self.GISP_FILE_PATH, index=False)
+                
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                
+                self.last_update = datetime.now()
+                logger.info(f"GISP file updated successfully at {self.last_update}")
+                
         except Exception as e:
             logger.error(f"Error downloading/optimizing GISP file: {e}")
             if os.path.exists(temp_file):

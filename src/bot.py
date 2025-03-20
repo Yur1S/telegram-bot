@@ -56,14 +56,11 @@ HELP_MESSAGE = """
 - 📊 ГИСП
 - 🔄 ЕАЭС
 
-Дополнительно:
-- Результаты предоставляются в формате Excel
-- В любой момент можно остановить поиск кнопкой "🛑 Остановить поиск"
-
 Для администраторов:
 /admin add username - Добавить пользователя
 /admin remove username - Удалить пользователя
 /admin list - Список пользователей
+/update_gisp - Принудительное обновление файла ГИСП
 """
 
 SEARCH_SOURCES = {
@@ -78,6 +75,7 @@ class ProductSearchBot:
         self.report_generator = ReportGenerator()
         self.user_manager = UserManager()
         self.active_searches = set()
+        self.file_update_status = None
         
         if not self.user_manager.is_admin(ADMIN_USERNAME):
             self.user_manager.allowed_users["admins"].append(ADMIN_USERNAME)
@@ -130,6 +128,24 @@ class ProductSearchBot:
         else:
             await update.message.reply_text("Нет активного поиска для остановки.")
 
+    async def update_gisp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+        if not self.user_manager.is_admin(user.username):
+            await update.message.reply_text("У вас нет прав администратора.")
+            return
+
+        status_message = await update.message.reply_text("⏳ Начало обновления файла ГИСП...")
+        self.file_update_status = status_message
+
+        try:
+            await self.scraper.download_gisp_file_with_status(self.file_update_status)
+            await status_message.edit_text("✅ Файл ГИСП успешно обновлен!")
+        except Exception as e:
+            logger.error(f"Manual GISP update error: {e}")
+            await status_message.edit_text("❌ Ошибка при обновлении файла ГИСП")
+        finally:
+            self.file_update_status = None
+
     async def admin_commands(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         if not self.user_manager.is_admin(user.username):
@@ -164,6 +180,7 @@ class ProductSearchBot:
 /admin add username - Добавить пользователя
 /admin remove username - Удалить пользователя
 /admin list - Показать список пользователей
+/update_gisp - Обновить файл ГИСП
             """
             await update.message.reply_text(help_text)
 
@@ -287,7 +304,7 @@ class ProductSearchBot:
                 await status_message.delete()
                 return
 
-            if not results:
+                        if not results:
                 await status_message.edit_text(
                     "❌ По вашему запросу ничего не найдено.",
                     reply_markup=ReplyKeyboardRemove()
@@ -327,6 +344,7 @@ class ProductSearchBot:
             application.add_handler(CommandHandler("help", self.help))
             application.add_handler(CommandHandler("stop", self.stop_search))
             application.add_handler(CommandHandler("admin", self.admin_commands))
+            application.add_handler(CommandHandler("update_gisp", self.update_gisp))
             application.add_handler(CallbackQueryHandler(self.search_handler))
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
             
