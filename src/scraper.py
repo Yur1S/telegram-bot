@@ -16,7 +16,7 @@ class ProductScraper:
     def __init__(self):
         logger.info("Initializing ProductScraper...")
         self.EAEU_API_URL = "https://goszakupki.eaeunion.org/spd/find"
-        self.GISP_EXCEL_URL = "https://gisp.gov.ru/pp719v2/mptapp/view/dl/production_res_valid_only/"
+        self.GISP_EXCEL_URL = "https://gisp.gov.ru/documents/10546/11962150/reestr_pprf_719_27122023.xlsx"
         self.GISP_FILE_PATH = "data/gisp_products.csv"
         self.last_update = None
         self.file_update_status = None
@@ -30,33 +30,48 @@ class ProductScraper:
         logger.info("ProductScraper initialized successfully")
 
     async def download_gisp_file_with_status(self, status_message):
+        temp_file = "data/temp_gisp.xlsx"
         try:
             logger.info("Starting GISP file download with status updates...")
             await status_message.edit_text("⏳ Скачивание файла ГИСП...")
             
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept': '*/*',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
+                'Referer': 'https://gisp.gov.ru/',
             }
             
-            response = requests.get(self.GISP_EXCEL_URL, headers=headers, verify=True, timeout=30)
-            
-            if response.status_code != 200:
-                logger.error(f"GISP server returned status code: {response.status_code}")
-                raise Exception(f"Server returned status code: {response.status_code}")
+            logger.debug(f"Sending request to {self.GISP_EXCEL_URL}")
+            try:
+                response = requests.get(self.GISP_EXCEL_URL, headers=headers, verify=True, timeout=60, stream=True)
+                logger.debug(f"Response status: {response.status_code}")
+                logger.debug(f"Response headers: {dict(response.headers)}")
                 
-            content_type = response.headers.get('content-type', '')
-            if 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' not in content_type:
-                logger.error(f"Unexpected content type: {content_type}")
-                raise Exception(f"Unexpected content type: {content_type}")
+                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request failed: {str(e)}")
+                raise Exception(f"Failed to download file: {str(e)}")
 
-            temp_file = "data/temp_gisp.xlsx"
+            # Проверяем размер файла
+            content_length = int(response.headers.get('content-length', 0))
+            logger.debug(f"Content length: {content_length} bytes")
+            if content_length == 0:
+                raise Exception("Empty file received")
+
+            # Скачиваем файл чанками
             with open(temp_file, 'wb') as f:
-                f.write(response.content)
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
             
+            file_size = os.path.getsize(temp_file)
+            logger.debug(f"Downloaded file size: {file_size} bytes")
+            if file_size == 0:
+                raise Exception("Downloaded file is empty")
+
             await status_message.edit_text("⏳ Обработка файла...")
             df = pd.read_excel(
                 temp_file,
