@@ -132,87 +132,77 @@ class ProductScraper:
                 
                 # Обновляем индексы частями
                 await status_message.edit_text("⏳ Создание индексов поиска...")
-                self._update_search_index_by_chunks()
+                # Добавляем метод _update_search_index_by_chunks, который вызывается, но не реализован
+                def _update_search_index_by_chunks(self):
+                    """Создает индексы для быстрого поиска, обрабатывая файл частями"""
+                    logger.info("Updating search indexes by chunks...")
+                    self.search_index = {
+                        'okpd2': {},
+                        'name': set()
+                    }
+                    
+                    # Используем небольшой размер чанка для экономии памяти
+                    chunk_size = 5000
+                    total_processed = 0
+                    
+                    try:
+                        for chunk in pd.read_csv(
+                            self.GISP_FILE_PATH, 
+                            encoding='utf-8-sig',
+                            dtype={
+                                'ИНН': str,
+                                'Реестровый номер': str,
+                                'ОКПД2': str,
+                                'ТН ВЭД': str
+                            },
+                            chunksize=chunk_size
+                        ):
+                            # Индекс для ОКПД2
+                            for idx, code in enumerate(chunk['ОКПД2']):
+                                if pd.notna(code):
+                                    code = str(code).lower()
+                                    # Ограничиваем длину префиксов для экономии памяти
+                                    max_prefix_len = min(len(code), 10)
+                                    for i in range(max_prefix_len):
+                                        prefix = code[:i+1]
+                                        if prefix not in self.search_index['okpd2']:
+                                            self.search_index['okpd2'][prefix] = set()
+                                        # Используем глобальный индекс
+                                        self.search_index['okpd2'][prefix].add(total_processed + idx)
+                                
+                                # Индекс для наименований (только уникальные значения)
+                                self.search_index['name'].update(
+                                    set(chunk['Наименование продукции'].str.lower().dropna())
+                                )
+                                
+                                total_processed += len(chunk)
+                                
+                                # Принудительная очистка памяти
+                                import gc
+                                del chunk
+                                gc.collect()
+                            
+                            logger.info(f"Search indexes updated successfully, processed {total_processed} rows")
+                            
+                            # Сохраняем первые 1000 строк в кэш для быстрого доступа
+                            self.df_cache = pd.read_csv(
+                                self.GISP_FILE_PATH,
+                                encoding='utf-8-sig',
+                                dtype={
+                                    'ИНН': str,
+                                    'Реестровый номер': str,
+                                    'ОКПД2': str,
+                                    'ТН ВЭД': str
+                                },
+                                nrows=1000
+                            )
+                            
+                        except Exception as e:
+                            logger.error(f"Error updating search indexes: {e}", exc_info=True)
+                            # Создаем пустые индексы в случае ошибки
+                            self.search_index = {'okpd2': {}, 'name': set()}
                 
-                await status_message.edit_text("✅ Файл ГИСП успешно обновлен!")
-                self.last_update = datetime.now()
-
-            except Exception as e:
-                logger.error(f"Excel processing failed: {str(e)}", exc_info=True)
-                await status_message.edit_text(f"❌ Ошибка при обработке файла: {str(e)}")
-                raise Exception(f"Failed to process Excel file: {str(e)}")
-            
-            finally:
-                # Удаляем временный файл
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-                    logger.debug("Temporary Excel file removed")
-            
-        except Exception as e:
-            logger.error(f"GISP update failed: {str(e)}")
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-            raise e
-
-    def download_gisp_file(self):
-        try:
-            logger.info("Starting GISP file download...")
-            if self.file_update_status:
-                # Используем существующий асинхронный метод с отображением статуса
-                asyncio.run(self.download_gisp_file_with_status(self.file_update_status))
-            else:
-                # Добавляем чтение по частям даже без статуса
-                temp_file = "data/temp_gisp.xlsx"
-                response = requests.get(self.GISP_EXCEL_URL)
-                response.raise_for_status()
-                
-                with open(temp_file, 'wb') as f:
-                    f.write(response.content)
-                
-                logger.info("Processing GISP file...")
-                # Вариант для серверов с ограниченной памятью
-                chunk_size = 25000  # Оптимальный размер чанка
-                chunks = []
-                
-                for chunk in pd.read_excel(
-                    temp_file,
-                    usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
-                    skiprows=2,
-                    names=[
-                        'Предприятие', 'ИНН', 'Реестровый номер', 
-                        'Дата внесения в реестр', 'Срок действия',
-                        'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
-                    ],
-                    engine='openpyxl',
-                    dtype={
-                        'ИНН': str,
-                        'Реестровый номер': str,
-                        'ОКПД2': str,
-                        'ТН ВЭД': str
-                    },
-                    chunksize=chunk_size
-                ):
-                    chunk = chunk.dropna(how='all')
-                    chunks.append(chunk)
-                    await status_message.edit_text(f"⏳ Обработано строк: {len(chunks) * chunk_size}")
-                
-                df = pd.concat(chunks, ignore_index=True)
-                logger.info(f"Optimizing GISP data...")
-                df = df.dropna(how='all')
-                df = df.reset_index(drop=True)
-                
-                # В методе download_gisp_file и download_gisp_file_with_status
-                logger.info("Saving GISP file...")
-                # Создаем индексы для поиска
-                df['_окпд2_lower'] = df['ОКПД2'].str.lower()
-                df['_name_lower'] = df['Наименование продукции'].str.lower()
-                
-                # Сохраняем с индексами
-                df.to_csv(self.GISP_FILE_PATH, index=False, encoding='utf-8-sig')
-                
-                # Обновляем кэш и индексы
-                self.df_cache = df
-                self._update_search_index(df)
+                logger.info("Search indexes updated successfully")
 
             total_rows = len(df)  # Определяем общее количество строк
             
