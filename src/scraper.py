@@ -177,8 +177,22 @@ class ProductScraper:
                 df = df.dropna(how='all')
                 df = df.reset_index(drop=True)
                 
+                # В методе download_gisp_file и download_gisp_file_with_status
                 logger.info("Saving GISP file...")
-                df.to_csv(self.GISP_FILE_PATH, index=False)
+                df.to_csv(self.GISP_FILE_PATH, index=False, encoding='utf-8-sig')
+                
+                # В методе search_gisp
+                # Читаем CSV с оптимизированными типами данных
+                df = pd.read_csv(
+                    self.GISP_FILE_PATH,
+                    encoding='utf-8-sig',  # Явно указываем кодировку при чтении
+                    dtype={
+                        'ИНН': str,
+                        'Реестровый номер': str,
+                        'ОКПД2': str,
+                        'ТН ВЭД': str
+                    }
+                )
                 
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
