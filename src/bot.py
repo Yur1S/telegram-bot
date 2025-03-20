@@ -1,7 +1,5 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 import pandas as pd
 import logging
 import asyncio
@@ -10,7 +8,7 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import BOT_TOKEN, CHROME_OPTIONS, ADMIN_USERNAME
+from config import BOT_TOKEN, ADMIN_USERNAME
 from src.scraper import ProductScraper
 from src.report_generator import ReportGenerator
 from src.user_manager import UserManager
@@ -34,15 +32,42 @@ WELCOME_MESSAGE = """
 /help - Показать справку
 """
 
+HELP_MESSAGE = """
+📖 Справка по использованию бота
+
+Основные команды:
+/start - Начать новый поиск
+/help - Показать это сообщение
+/stop - Остановить текущий поиск
+
+Типы поиска:
+1. 🔍 Поиск по ОКПД2
+   - Введите код ОКПД2 (например: 26.20.11)
+
+2. 📝 Поиск по наименованию
+   - Введите название продукции (например: компьютер)
+
+3. 🔄 Комбинированный поиск
+   - Введите код ОКПД2 и название через запятую
+   - Пример: 26.20.11, компьютер
+
+Дополнительно:
+- Поиск осуществляется по базам ГИСП и ЕАЭС
+- Результаты предоставляются в формате Excel
+- В любой момент можно остановить поиск кнопкой "🛑 Остановить поиск"
+
+Для администраторов:
+/admin add username - Добавить пользователя
+/admin remove username - Удалить пользователя
+/admin list - Список пользователей
+"""
+
 class ProductSearchBot:
     def __init__(self):
-        self.chrome_options = Options()
-        for option in CHROME_OPTIONS:
-            self.chrome_options.add_argument(option)
-        
-        self.scraper = ProductScraper(self.chrome_options)
+        self.scraper = ProductScraper()
         self.report_generator = ReportGenerator()
         self.user_manager = UserManager()
+        self.active_searches = set()
         
         if not self.user_manager.is_admin(ADMIN_USERNAME):
             self.user_manager.allowed_users["admins"].append(ADMIN_USERNAME)
@@ -60,6 +85,11 @@ class ProductSearchBot:
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(WELCOME_MESSAGE, reply_markup=reply_markup)
 
+    async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.check_access(update):
+            return
+        await update.message.reply_text(HELP_MESSAGE)
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_access(update):
             return
@@ -76,6 +106,18 @@ class ProductSearchBot:
             "Выберите тип поиска:",
             reply_markup=reply_markup
         )
+
+    async def stop_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if user_id in self.active_searches:
+            self.active_searches.remove(user_id)
+            await update.message.reply_text(
+                "Поиск остановлен. Выберите тип нового поиска:", 
+                reply_markup=ReplyKeyboardRemove()
+            )
+            await self.start(update, context)
+        else:
+            await update.message.reply_text("Нет активного поиска для остановки.")
 
     async def admin_commands(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
@@ -138,6 +180,10 @@ class ProductSearchBot:
         if update.message.text == "🔍 Начать поиск":
             await self.start(update, context)
             return
+        
+        if update.message.text == "🛑 Остановить поиск":
+            await self.stop_search(update, context)
+            return
 
         if 'search_type' not in context.user_data:
             await update.message.reply_text("Пожалуйста, выберите тип поиска с помощью команды /start")
@@ -145,29 +191,45 @@ class ProductSearchBot:
 
         search_type = context.user_data['search_type']
         query = update.message.text
+        user_id = update.effective_user.id
+        self.active_searches.add(user_id)
 
-        await update.message.reply_text("🔍 Выполняется поиск...")
+        stop_keyboard = [[KeyboardButton("🛑 Остановить поиск")]]
+        stop_markup = ReplyKeyboardMarkup(stop_keyboard, resize_keyboard=True)
+        await update.message.reply_text("🔍 Выполняется поиск...", reply_markup=stop_markup)
 
         try:
+            if user_id not in self.active_searches:
+                return
+
             if search_type == 'okpd2':
-                results = self.scraper.search_gisp(okpd2=query)
+                results = self.scraper.search_all(okpd2=query)
             elif search_type == 'name':
-                results = self.scraper.search_gisp(name=query)
+                results = self.scraper.search_all(name=query)
             elif search_type == 'combined':
                 okpd2, name = [x.strip() for x in query.split(',', 1)]
-                results = self.scraper.search_gisp(okpd2=okpd2, name=name)
+                results = self.scraper.search_all(okpd2=okpd2, name=name)
+
+            if user_id not in self.active_searches:
+                return
 
             if not results:
-                await update.message.reply_text("По вашему запросу ничего не найдено.")
+                await update.message.reply_text(
+                    "По вашему запросу ничего не найдено.",
+                    reply_markup=ReplyKeyboardRemove()
+                )
+                await self.start(update, context)
                 return
 
             excel_report = self.report_generator.generate_excel_report(results)
-            if excel_report:
+            if excel_report and user_id in self.active_searches:
                 await update.message.reply_document(
                     document=excel_report,
                     filename='search_results.xlsx',
-                    caption=f"Найдено результатов: {len(results)}"
+                    caption=f"Найдено результатов: {len(results)}",
+                    reply_markup=ReplyKeyboardRemove()
                 )
+                await self.start(update, context)
             else:
                 await update.message.reply_text("Ошибка при формировании отчета.")
 
@@ -176,6 +238,8 @@ class ProductSearchBot:
             await update.message.reply_text("Произошла ошибка при поиске. Попробуйте позже.")
 
         finally:
+            if user_id in self.active_searches:
+                self.active_searches.remove(user_id)
             context.user_data.pop('search_type', None)
 
     def run(self):
@@ -183,7 +247,8 @@ class ProductSearchBot:
             application = Application.builder().token(BOT_TOKEN).build()
             
             application.add_handler(CommandHandler("start", self.welcome))
-            application.add_handler(CommandHandler("help", self.welcome))
+            application.add_handler(CommandHandler("help", self.help))
+            application.add_handler(CommandHandler("stop", self.stop_search))
             application.add_handler(CommandHandler("admin", self.admin_commands))
             application.add_handler(CallbackQueryHandler(self.search_handler))
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))

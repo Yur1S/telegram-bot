@@ -55,29 +55,52 @@ class ProductScraper:
                 logger.error("GISP Excel file not found")
                 return []
 
-            df = pd.read_excel(self.GISP_FILE_PATH)
+            df = pd.read_excel(
+                self.GISP_FILE_PATH,
+                usecols=[11, 12],
+                skiprows=2,
+                names=['Наименование продукции', 'ОКПД2']
+            )
             
-            if okpd2 and name:
-                mask = (df['ОКПД2'].str.contains(okpd2, case=False, na=False) & 
-                       df['Наименование'].str.contains(name, case=False, na=False))
-            elif okpd2:
-                mask = df['ОКПД2'].str.contains(okpd2, case=False, na=False)
-            elif name:
-                mask = df['Наименование'].str.contains(name, case=False, na=False)
-            else:
-                return []
-
+            df = df.dropna(how='all')
+            
+            if name:
+                name = name.lower()
+            if okpd2:
+                okpd2 = okpd2.lower()
+            
+            chunk_size = 1000
             results = []
-            for _, row in df[mask].iterrows():
-                result = {
-                    'name': row['Наименование'],
-                    'okpd2_code': row['ОКПД2'],
-                    'manufacturer': row['Производитель'],
-                    'source': 'GISP'
-                }
-                results.append(result)
             
-            return results
+            for i in range(0, len(df), chunk_size):
+                chunk = df.iloc[i:i + chunk_size]
+                
+                if okpd2 and name:
+                    mask = (
+                        chunk['ОКПД2'].str.lower().str.contains(okpd2, na=False) &
+                        chunk['Наименование продукции'].str.lower().str.contains(name, na=False)
+                    )
+                elif okpd2:
+                    mask = chunk['ОКПД2'].str.lower().str.contains(okpd2, na=False)
+                elif name:
+                    mask = chunk['Наименование продукции'].str.lower().str.contains(name, na=False)
+                else:
+                    continue
+
+                for _, row in chunk[mask].iterrows():
+                    results.append({
+                        'name': row['Наименование продукции'],
+                        'okpd2_code': row['ОКПД2'],
+                        'manufacturer': '',
+                        'source': 'GISP'
+                    })
+
+                del chunk
+                
+                if len(results) >= 100:
+                    break
+
+            return results[:100]
 
         except Exception as e:
             logger.error(f"GISP Excel search error: {e}")
