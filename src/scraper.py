@@ -649,24 +649,27 @@ class ProductScraper:
                     first_chunk = True
                     total_rows = 0
                     
-                    for chunk in pd.read_excel(
+                    # Читаем весь файл и сохраняем частями
+                    df = pd.read_excel(
                         temp_file,
                         skiprows=2,
                         engine='openpyxl',
-                        dtype=str,
-                        chunksize=chunk_size
-                    ):
-                        # Обработка чанка
-                        chunk = chunk.dropna(how='all')
-                        
-                        # Запись в CSV
-                        if first_chunk:
-                            chunk.to_csv(f, index=False)
-                            first_chunk = False
-                        else:
-                            chunk.to_csv(f, index=False, header=False)
-                        
-                        total_rows += len(chunk)
+                        dtype=str
+                    )
+                    
+                    total_rows = len(df)
+                    chunk_size = 5000
+                    
+                    for i in range(0, total_rows, chunk_size):
+                        chunk = df.iloc[i:i+chunk_size]
+                        mode = 'w' if i == 0 else 'a'
+                        chunk.to_csv(
+                            self.GISP_FILE_PATH,
+                            mode=mode,
+                            index=False,
+                            header=(i == 0),
+                            encoding='utf-8-sig'
+                        )
                         
                         # Очистка памяти
                         del chunk
