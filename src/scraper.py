@@ -138,17 +138,20 @@ class ProductScraper:
         try:
             logger.info("Starting GISP file download...")
             if self.file_update_status:
+                # Используем существующий асинхронный метод с отображением статуса
                 asyncio.run(self.download_gisp_file_with_status(self.file_update_status))
             else:
+                # Добавляем чтение по частям даже без статуса
+                temp_file = "data/temp_gisp.xlsx"
                 response = requests.get(self.GISP_EXCEL_URL)
                 response.raise_for_status()
                 
-                temp_file = "data/temp_gisp.xlsx"
                 with open(temp_file, 'wb') as f:
                     f.write(response.content)
                 
                 logger.info("Processing GISP file...")
-                df = pd.read_excel(
+                chunks = []
+                for chunk in pd.read_excel(
                     temp_file,
                     usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
                     skiprows=2,
@@ -163,10 +166,14 @@ class ProductScraper:
                         'Реестровый номер': str,
                         'ОКПД2': str,
                         'ТН ВЭД': str
-                    }
-                )
+                    },
+                    chunksize=10000
+                ):
+                    chunks.append(chunk)
+                    logger.info(f"Processed chunk, total rows: {len(chunks) * 10000}")
                 
-                logger.info("Optimizing GISP data...")
+                df = pd.concat(chunks, ignore_index=True)
+                logger.info(f"Optimizing GISP data...")
                 df = df.dropna(how='all')
                 df = df.reset_index(drop=True)
                 
@@ -349,25 +356,42 @@ class ProductScraper:
             return []
 
     async def search_all(self, okpd2: Optional[str] = None, name: Optional[str] = None, status_message=None) -> List[Dict]:
-        logger.info(f"Starting combined search with okpd2={okpd2}, name={name}")
-        
-        if status_message:
-            await status_message.edit_text("🔍 Поиск в ЕАЭС...")
-        eaeu_results = self.search_eaeu(okpd2, name)
-        
-        if status_message:
-            await status_message.edit_text("🔍 Поиск в ГИСП...")
-        gisp_results = await self.search_gisp(okpd2, name, status_message)
-        
-        total_results = eaeu_results + gisp_results
-        
-        if status_message:
-            await status_message.edit_text(
-                f"✅ Поиск завершен\n"
-                f"📊 Всего найдено: {len(total_results)}\n"
-                f"ЕАЭС: {len(eaeu_results)}\n"
-                f"ГИСП: {len(gisp_results)}"
-            )
-        
-        logger.info(f"Combined search completed, total results: {len(total_results)}")
-        return total_results
+        try:
+            logger.info(f"Starting combined search with okpd2={okpd2}, name={name}")
+            
+            if status_message:
+                await status_message.edit_text(
+                    "🔍 Поиск в ЕАЭС...\n"
+                    "⏳ Прогресс: 0%"
+                )
+            eaeu_results = self.search_eaeu(okpd2, name)
+            
+            if status_message:
+                await status_message.edit_text(
+                    "🔍 Поиск в ГИСП...\n"
+                    "⏳ Прогресс: 50%"
+                )
+            gisp_results = await self.search_gisp(okpd2, name, status_message)
+            
+            total_results = eaeu_results + gisp_results
+            
+            if status_message:
+                await status_message.edit_text(
+                    f"✅ Поиск завершен\n"
+                    f"📊 Всего найдено: {len(total_results)}\n"
+                    f"ЕАЭС: {len(eaeu_results)}\n"
+                    f"ГИСП: {len(gisp_results)}\n\n"
+                    f"Используйте /start для нового поиска"
+                )
+            
+            logger.info(f"Combined search completed, total results: {len(total_results)}")
+            return total_results
+            
+        except Exception as e:
+            logger.error(f"Combined search error: {e}")
+            if status_message:
+                await status_message.edit_text(
+                    f"❌ Ошибка при поиске: {str(e)}\n\n"
+                    f"Используйте /start для нового поиска"
+                )
+            return []
