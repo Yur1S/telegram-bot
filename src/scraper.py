@@ -20,6 +20,10 @@ class ProductScraper:
         
         os.makedirs(os.path.dirname(self.GISP_FILE_PATH), exist_ok=True)
         self.start_background_updates()
+        
+        # Проверяем наличие файла при инициализации
+        if not os.path.exists(self.GISP_FILE_PATH):
+            self.download_gisp_file()
 
     def download_gisp_file(self):
         try:
@@ -29,14 +33,31 @@ class ProductScraper:
             if os.path.exists(self.GISP_FILE_PATH):
                 os.remove(self.GISP_FILE_PATH)
             
-            with open(self.GISP_FILE_PATH, 'wb') as f:
+            temp_file = self.GISP_FILE_PATH + '.temp'
+            with open(temp_file, 'wb') as f:
                 f.write(response.content)
             
+            df = pd.read_excel(
+                temp_file,
+                usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],  # A,B,G,I,J,L,M,N,O columns
+                skiprows=2,
+                names=[
+                    'Предприятие', 'ИНН', 'Реестровый номер', 
+                    'Дата внесения в реестр', 'Срок действия',
+                    'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
+                ]
+            )
+            
+            df = df.dropna(how='all')
+            df.to_excel(self.GISP_FILE_PATH, index=False)
+            
+            os.remove(temp_file)
+            
             self.last_update = datetime.now()
-            logger.info(f"GISP Excel file updated successfully at {self.last_update}")
+            logger.info(f"GISP Excel file updated and optimized successfully at {self.last_update}")
             
         except Exception as e:
-            logger.error(f"Error downloading GISP file: {e}")
+            logger.error(f"Error downloading/optimizing GISP file: {e}")
 
     def update_scheduler(self):
         while True:
@@ -47,60 +68,54 @@ class ProductScraper:
         schedule.every().day.at("00:00").do(self.download_gisp_file)
         thread = threading.Thread(target=self.update_scheduler, daemon=True)
         thread.start()
-        self.download_gisp_file()
 
     def search_gisp(self, okpd2: Optional[str] = None, name: Optional[str] = None) -> List[Dict]:
         try:
             if not os.path.exists(self.GISP_FILE_PATH):
-                logger.error("GISP Excel file not found")
-                return []
+                logger.warning("GISP Excel file not found, downloading...")
+                self.download_gisp_file()
+                if not os.path.exists(self.GISP_FILE_PATH):
+                    logger.error("Failed to download GISP file")
+                    return []
 
-            df = pd.read_excel(
-                self.GISP_FILE_PATH,
-                usecols=[11, 12],
-                skiprows=2,
-                names=['Наименование продукции', 'ОКПД2']
-            )
-            
-            df = df.dropna(how='all')
+            df = pd.read_excel(self.GISP_FILE_PATH)
             
             if name:
                 name = name.lower()
             if okpd2:
                 okpd2 = okpd2.lower()
             
-            chunk_size = 1000
             results = []
             
-            for i in range(0, len(df), chunk_size):
-                chunk = df.iloc[i:i + chunk_size]
-                
-                if okpd2 and name:
-                    mask = (
-                        chunk['ОКПД2'].str.lower().str.contains(okpd2, na=False) &
-                        chunk['Наименование продукции'].str.lower().str.contains(name, na=False)
-                    )
-                elif okpd2:
-                    mask = chunk['ОКПД2'].str.lower().str.contains(okpd2, na=False)
-                elif name:
-                    mask = chunk['Наименование продукции'].str.lower().str.contains(name, na=False)
-                else:
-                    continue
+            if okpd2 and name:
+                mask = (
+                    df['ОКПД2'].str.lower().str.contains(okpd2, na=False) &
+                    df['Наименование продукции'].str.lower().str.contains(name, na=False)
+                )
+            elif okpd2:
+                mask = df['ОКПД2'].str.lower().str.contains(okpd2, na=False)
+            elif name:
+                mask = df['Наименование продукции'].str.lower().str.contains(name, na=False)
+            else:
+                return []
 
-                for _, row in chunk[mask].iterrows():
-                    results.append({
-                        'name': row['Наименование продукции'],
-                        'okpd2_code': row['ОКПД2'],
-                        'manufacturer': '',
-                        'source': 'ГИСП'
-                    })
-
-                del chunk
-                
+            for _, row in df[mask].iterrows():
+                results.append({
+                    'name': row['Наименование продукции'],
+                    'okpd2_code': row['ОКПД2'],
+                    'manufacturer': row['Предприятие'],
+                    'inn': row['ИНН'],
+                    'registry_number': row['Реестровый номер'],
+                    'registry_date': row['Дата внесения в реестр'],
+                    'valid_until': row['Срок действия'],
+                    'tn_ved': row['ТН ВЭД'],
+                    'standard': row['Изготовлена по'],
+                    'source': 'ГИСП'
+                })
                 if len(results) >= 100:
                     break
 
-            return results[:100]
+            return results
 
         except Exception as e:
             logger.error(f"GISP Excel search error: {e}")
@@ -134,9 +149,13 @@ class ProductScraper:
                 result = {
                     'name': item.get('name', ''),
                     'okpd2_code': item.get('okpd2', {}).get('code', ''),
-                    'okpd2_name': item.get('okpd2', {}).get('name', ''),
                     'manufacturer': item.get('manufacturer', {}).get('name', ''),
-                    'publish_date': item.get('publishdate', ''),
+                    'inn': '',
+                    'registry_number': '',
+                    'registry_date': '',
+                    'valid_until': '',
+                    'tn_ved': '',
+                    'standard': '',
                     'source': 'ЕАЭС'
                 }
                 results.append(result)
