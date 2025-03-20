@@ -269,6 +269,7 @@ class ProductSearchBot:
             return
 
         search_type = context.user_data['search_type']
+        source = context.user_data.get('source', 'all')
         query = update.message.text
         user_id = update.effective_user.id
         
@@ -282,7 +283,7 @@ class ProductSearchBot:
         stop_markup = ReplyKeyboardMarkup(stop_keyboard, resize_keyboard=True)
         
         status_message = await update.message.reply_text(
-            "🔍 Выполняется поиск...",
+            "🔍 Начинаем поиск...",
             reply_markup=stop_markup
         )
 
@@ -290,40 +291,22 @@ class ProductSearchBot:
             if user_id not in self.active_searches:
                 return
 
-            source = context.user_data.get('source', 'all')
             results = []
-
             if search_type == 'okpd2':
                 if source == 'gisp':
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
-                    results = self.scraper.search_gisp(okpd2=query)
+                    results = await self.scraper.search_gisp(okpd2=query, status_message=status_message)
                 elif source == 'eaeu':
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
                     results = self.scraper.search_eaeu(okpd2=query)
                 else:
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
-                    gisp_results = self.scraper.search_gisp(okpd2=query)
-                    if user_id not in self.active_searches:
-                        return
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
-                    eaeu_results = self.scraper.search_eaeu(okpd2=query)
-                    results = gisp_results + eaeu_results
+                    results = await self.scraper.search_all(okpd2=query, status_message=status_message)
 
             elif search_type == 'name':
                 if source == 'gisp':
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
-                    results = self.scraper.search_gisp(name=query)
+                    results = await self.scraper.search_gisp(name=query, status_message=status_message)
                 elif source == 'eaeu':
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
                     results = self.scraper.search_eaeu(name=query)
                 else:
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
-                    gisp_results = self.scraper.search_gisp(name=query)
-                    if user_id not in self.active_searches:
-                        return
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
-                    eaeu_results = self.scraper.search_eaeu(name=query)
-                    results = gisp_results + eaeu_results
+                    results = await self.scraper.search_all(name=query, status_message=status_message)
 
             elif search_type == 'combined':
                 try:
@@ -333,19 +316,11 @@ class ProductSearchBot:
                     return
                 
                 if source == 'gisp':
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
-                    results = self.scraper.search_gisp(okpd2=okpd2, name=name)
+                    results = await self.scraper.search_gisp(okpd2=okpd2, name=name, status_message=status_message)
                 elif source == 'eaeu':
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
                     results = self.scraper.search_eaeu(okpd2=okpd2, name=name)
                 else:
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ГИСП...")
-                    gisp_results = self.scraper.search_gisp(okpd2=okpd2, name=name)
-                    if user_id not in self.active_searches:
-                        return
-                    await status_message.edit_text("🔍 Выполняется поиск...\n⏳ Поиск в ЕАЭС...")
-                    eaeu_results = self.scraper.search_eaeu(okpd2=okpd2, name=name)
-                    results = gisp_results + eaeu_results
+                    results = await self.scraper.search_all(okpd2=okpd2, name=name, status_message=status_message)
 
             if user_id not in self.active_searches:
                 await status_message.delete()
