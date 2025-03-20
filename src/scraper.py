@@ -32,7 +32,8 @@ class ProductScraper:
     async def download_gisp_file_with_status(self, status_message):
         temp_file = "data/temp_gisp.xlsx"
         try:
-            logger.info("Starting GISP file download with status updates...")
+            # Этап 1: Скачивание файла
+            logger.info("Starting GISP file download...")
             await status_message.edit_text("⏳ Скачивание файла ГИСП...")
             
             headers = {
@@ -43,69 +44,70 @@ class ProductScraper:
                 'Connection': 'keep-alive',
                 'Referer': 'https://gisp.gov.ru/',
             }
+
+            self.GISP_EXCEL_URL = "https://gisp.gov.ru/pp719v2/mptapp/view/dl/production_res_valid_only/"
             
-            logger.debug(f"Sending request to {self.GISP_EXCEL_URL}")
             try:
-                response = requests.get(self.GISP_EXCEL_URL, headers=headers, verify=True, timeout=60, stream=True)
-                logger.debug(f"Response status: {response.status_code}")
-                logger.debug(f"Response headers: {dict(response.headers)}")
-                
+                response = requests.get(self.GISP_EXCEL_URL, headers=headers, verify=True, timeout=60)
                 response.raise_for_status()
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Request failed: {str(e)}")
+                
+                # Сохраняем Excel файл
+                with open(temp_file, 'wb') as f:
+                    f.write(response.content)
+                
+                if not os.path.exists(temp_file) or os.path.getsize(temp_file) == 0:
+                    raise Exception("Failed to download file or file is empty")
+                
+                logger.info(f"Excel file downloaded successfully, size: {os.path.getsize(temp_file)} bytes")
+                
+            except Exception as e:
+                logger.error(f"Download failed: {str(e)}")
                 raise Exception(f"Failed to download file: {str(e)}")
 
-            # Проверяем размер файла
-            content_length = int(response.headers.get('content-length', 0))
-            logger.debug(f"Content length: {content_length} bytes")
-            if content_length == 0:
-                raise Exception("Empty file received")
-
-            # Скачиваем файл чанками
-            with open(temp_file, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
+            # Этап 2: Обработка файла
+            await status_message.edit_text("⏳ Обработка файла Excel...")
+            try:
+                df = pd.read_excel(
+                    temp_file,
+                    usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
+                    skiprows=2,
+                    names=[
+                        'Предприятие', 'ИНН', 'Реестровый номер', 
+                        'Дата внесения в реестр', 'Срок действия',
+                        'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
+                    ],
+                    engine='openpyxl',
+                    dtype={
+                        'ИНН': str,
+                        'Реестровый номер': str,
+                        'ОКПД2': str,
+                        'ТН ВЭД': str
+                    }
+                )
+                
+                await status_message.edit_text("⏳ Оптимизация данных...")
+                df = df.dropna(how='all')
+                df = df.reset_index(drop=True)
+                
+                # Сохраняем в CSV
+                await status_message.edit_text("⏳ Сохранение в CSV...")
+                df.to_csv(self.GISP_FILE_PATH, index=False)
+                
+                self.last_update = datetime.now()
+                logger.info(f"CSV file created successfully at {self.last_update}")
+                
+            except Exception as e:
+                logger.error(f"Excel processing failed: {str(e)}")
+                raise Exception(f"Failed to process Excel file: {str(e)}")
             
-            file_size = os.path.getsize(temp_file)
-            logger.debug(f"Downloaded file size: {file_size} bytes")
-            if file_size == 0:
-                raise Exception("Downloaded file is empty")
-
-            await status_message.edit_text("⏳ Обработка файла...")
-            df = pd.read_excel(
-                temp_file,
-                usecols=[0, 1, 6, 8, 9, 11, 12, 13, 14],
-                skiprows=2,
-                names=[
-                    'Предприятие', 'ИНН', 'Реестровый номер', 
-                    'Дата внесения в реестр', 'Срок действия',
-                    'Наименование продукции', 'ОКПД2', 'ТН ВЭД', 'Изготовлена по'
-                ],
-                engine='openpyxl',
-                dtype={
-                    'ИНН': str,
-                    'Реестровый номер': str,
-                    'ОКПД2': str,
-                    'ТН ВЭД': str
-                }
-            )
-            
-            await status_message.edit_text("⏳ Оптимизация данных...")
-            df = df.dropna(how='all')
-            df = df.reset_index(drop=True)
-            
-            await status_message.edit_text("⏳ Сохранение файла...")
-            df.to_csv(self.GISP_FILE_PATH, index=False)
-            
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-            
-            self.last_update = datetime.now()
-            logger.info(f"GISP file updated successfully with status at {self.last_update}")
+            finally:
+                # Удаляем временный файл
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                    logger.debug("Temporary Excel file removed")
             
         except Exception as e:
-            logger.error(f"Error downloading/optimizing GISP file with status: {e}")
+            logger.error(f"GISP update failed: {str(e)}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
             raise e
