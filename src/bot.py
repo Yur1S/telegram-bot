@@ -5,71 +5,14 @@ import logging
 import asyncio
 import os
 import sys
-import json
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from config import BOT_TOKEN, ADMIN_USERNAME
-from src.scraper import ProductScraper
-from src.report_generator import ReportGenerator
-from src.user_manager import UserManager
-
+# В начале файла, после импортов
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG,
+    level=logging.DEBUG,  # Изменено с INFO на DEBUG
     filename='bot.log',
     encoding='utf-8'
 )
-logger = logging.getLogger(__name__)
-
-WELCOME_MESSAGE = """
-👋 Добро пожаловать в бот для поиска продукции!
-
-Этот бот поможет вам найти информацию о продукции в базах данных ГИСП и ЕАЭС.
-
-Для начала работы нажмите кнопку "🔍 Начать поиск" или используйте команду /start
-
-Доступные команды:
-/start - Начать поиск
-/help - Показать справку
-"""
-
-HELP_MESSAGE = """
-📖 Справка по использованию бота
-
-Основные команды:
-/start - Начать новый поиск
-/help - Показать это сообщение
-/stop - Остановить текущий поиск
-
-Типы поиска:
-1. 🔍 Поиск по ОКПД2
-   - Введите код ОКПД2 (например: 26.20.11)
-
-2. 📝 Поиск по наименованию
-   - Введите название продукции (например: компьютер)
-
-3. 🔄 Комбинированный поиск
-   - Введите код ОКПД2 и название через запятую
-   - Пример: 26.20.11, компьютер
-
-Источники поиска:
-- 🌐 Везде (ГИСП + ЕАЭС)
-- 📊 ГИСП
-- 🔄 ЕАЭС
-
-Для администраторов:
-/admin add username - Добавить пользователя
-/admin remove username - Удалить пользователя
-/admin list - Список пользователей
-/update_gisp - Принудительное обновление файла ГИСП
-"""
-
-SEARCH_SOURCES = {
-    'all': 'Везде',
-    'gisp': 'ГИСП',
-    'eaeu': 'ЕАЭС'
-}
 
 class ProductSearchBot:
     def __init__(self):
@@ -81,8 +24,10 @@ class ProductSearchBot:
             self.active_searches = set()
             self.file_update_status = None
             
+            # Проверяем и создаем директорию для данных
             os.makedirs('data', exist_ok=True)
             
+            # Инициализируем файл пользователей, если он не существует
             if not os.path.exists('data/users.json'):
                 with open('data/users.json', 'w', encoding='utf-8') as f:
                     json.dump({"admins": [ADMIN_USERNAME], "usernames": []}, f)
@@ -316,7 +261,7 @@ class ProductSearchBot:
                     eaeu_results = self.scraper.search_eaeu(name=query)
                     results = gisp_results + eaeu_results
 
-                        elif search_type == 'combined':
+            elif search_type == 'combined':
                 try:
                     okpd2, name = [x.strip() for x in query.split(',', 1)]
                 except ValueError:
