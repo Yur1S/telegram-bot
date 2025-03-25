@@ -392,3 +392,42 @@ if __name__ == "__main__":
     logger.info("Main program starting...")
     bot = ProductSearchBot()
     bot.run()
+
+
+async def search_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик для кнопок поиска"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            search_type = query.data.replace('search_', '')
+            context.user_data['search_type'] = search_type
+            
+            # Удаляем инлайн клавиатуру
+            await query.message.edit_reply_markup(reply_markup=None)
+            
+            # Добавляем кнопку остановки поиска
+            keyboard = [[KeyboardButton("🛑 Остановить поиск")]]
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            
+            # Отправляем сообщение в зависимости от типа поиска
+            if search_type == 'okpd2':
+                await query.message.reply_text(
+                    "Введите код ОКПД2 (например: 26.20.11):",
+                    reply_markup=reply_markup
+                )
+            elif search_type == 'name':
+                await query.message.reply_text(
+                    "Введите название продукции:",
+                    reply_markup=reply_markup
+                )
+            elif search_type == 'combined':
+                await query.message.reply_text(
+                    "Введите код ОКПД2 и название через запятую\n"
+                    "Пример: 26.20.11, компьютер",
+                    reply_markup=reply_markup
+                )
+            
+        except Exception as e:
+            logger.error(f"Error in search handler: {e}", exc_info=True)
+            await query.message.reply_text("❌ Произошла ошибка при обработке запроса")
