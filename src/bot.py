@@ -14,13 +14,28 @@ from src.scraper import ProductScraper
 from src.report_generator import ReportGenerator
 from src.user_manager import UserManager
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG,
-    filename='bot.log',
-    encoding='utf-8'
-)
+# Убираем существующую настройку логирования
+# logging.basicConfig(...)
+
+# Настраиваем логирование
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+# Создаем обработчик для файла
+file_handler = logging.FileHandler('bot.log', encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(file_formatter)
+
+# Создаем обработчик для консоли
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+console_handler.setFormatter(console_formatter)
+
+# Добавляем оба обработчика
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 WELCOME_MESSAGE = """
 👋 Добро пожаловать в бот для поиска продукции!
