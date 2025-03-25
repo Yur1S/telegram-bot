@@ -6,16 +6,13 @@ import asyncio
 import os
 import sys
 import json
+import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from config import BOT_TOKEN, ADMIN_USERNAME
 from src.scraper import ProductScraper
 from src.report_generator import ReportGenerator
 from src.user_manager import UserManager
-
-# Убираем существующую настройку логирования
-# logging.basicConfig(...)
 
 # Настраиваем логирование
 logger = logging.getLogger(__name__)
@@ -39,11 +36,8 @@ logger.addHandler(console_handler)
 
 WELCOME_MESSAGE = """
 👋 Добро пожаловать в бот для поиска продукции!
-
 Этот бот поможет вам найти информацию о продукции в базах данных ГИСП и ЕАЭС.
-
 Для начала работы нажмите кнопку "🔍 Начать поиск" или используйте команду /start
-
 Доступные команды:
 /start - Начать поиск
 /help - Показать справку
@@ -51,28 +45,22 @@ WELCOME_MESSAGE = """
 
 HELP_MESSAGE = """
 📖 Справка по использованию бота
-
 Основные команды:
 /start - Начать новый поиск
 /help - Показать это сообщение
 /stop - Остановить текущий поиск
-
 Типы поиска:
 1. 🔍 Поиск по ОКПД2
    - Введите код ОКПД2 (например: 26.20.11)
-
 2. 📝 Поиск по наименованию
    - Введите название продукции (например: компьютер)
-
 3. 🔄 Комбинированный поиск
    - Введите код ОКПД2 и название через запятую
    - Пример: 26.20.11, компьютер
-
 Источники поиска:
 - 🌐 Везде (ГИСП + ЕАЭС)
 - 📊 ГИСП
 - 🔄 ЕАЭС
-
 Для администраторов:
 /admin add username - Добавить пользователя
 /admin remove username - Удалить пользователя
@@ -86,7 +74,6 @@ SEARCH_SOURCES = {
     'eaeu': 'ЕАЭС'
 }
 
-
 class ProductSearchBot:
     def __init__(self):
         logger.debug("Initializing ProductSearchBot...")
@@ -96,15 +83,12 @@ class ProductSearchBot:
             self.user_manager = UserManager()
             self.active_searches = set()
             self.file_update_status = None
-            
             # Проверяем и создаем директорию для данных
             os.makedirs('data', exist_ok=True)
-            
             # Инициализируем файл пользователей, если он не существует
             if not os.path.exists('data/users.json'):
                 with open('data/users.json', 'w', encoding='utf-8') as f:
                     json.dump({"admins": [ADMIN_USERNAME], "usernames": []}, f)
-            
             if not self.user_manager.is_admin(ADMIN_USERNAME):
                 logger.debug(f"Adding {ADMIN_USERNAME} as admin")
                 self.user_manager.allowed_users["admins"].append(ADMIN_USERNAME)
@@ -147,7 +131,6 @@ class ProductSearchBot:
             logger.debug(f"Start command from user {update.effective_user.username}")
             if not await self.check_access(update):
                 return
-
             keyboard = [
                 [
                     InlineKeyboardButton("Поиск по ОКПД2", callback_data='search_okpd2'),
@@ -168,11 +151,9 @@ class ProductSearchBot:
         try:
             user_id = update.effective_user.id
             logger.debug(f"Stop search requested for user {update.effective_user.username}")
-            
             if user_id in self.active_searches:
                 self.active_searches.remove(user_id)
                 context.user_data.clear()
-                
                 # Удаляем клавиатуру и отправляем сообщение
                 reply_markup = ReplyKeyboardRemove()
                 await update.message.reply_text(
@@ -196,26 +177,20 @@ class ProductSearchBot:
         if not self.user_manager.is_admin(user.username):
             await update.message.reply_text("У вас нет прав администратора.")
             return
-
         status_message = await update.message.reply_text("⏳ Начало обновления файла ГИСП...")
         self.file_update_status = status_message
-
         try:
             logger.debug("Starting GISP file download process...")
             await status_message.edit_text("⏳ Загрузка файла ГИСП...")
-            
             total_rows = await self.scraper.download_gisp_file_with_status(status_message)
-            
-            # Проверяем результаты обновления
+            # Добавляем задержку перед проверкой существования файла
+            time.sleep(2)
             if not os.path.exists(self.scraper.GISP_FILE_PATH):
                 raise Exception("CSV файл не был создан")
-                
             if os.path.getsize(self.scraper.GISP_FILE_PATH) == 0:
                 raise Exception("CSV файл создан, но пуст")
-                
             if total_rows <= 0:
                 raise Exception("Не было обработано ни одной строки")
-            
             # Проверяем и удаляем временный файл
             temp_file = self.scraper.TEMP_GISP_FILE
             if os.path.exists(temp_file):
@@ -224,7 +199,6 @@ class ProductSearchBot:
                     logger.info("Temporary Excel file removed successfully")
                 except Exception as e:
                     logger.warning(f"Failed to remove temporary file: {e}")
-            
             logger.debug(f"GISP file download completed, processed {total_rows} rows")
             await status_message.edit_text(
                 f"✅ Файл ГИСП успешно обновлен!\n"
@@ -236,7 +210,7 @@ class ProductSearchBot:
             logger.error(f"Manual GISP update error: {error_msg}", exc_info=True)
             await status_message.edit_text(
                 f"❌ Ошибка при обновлении файла ГИСП:\n"
-                f"{error_msg[:200]}\n\n"
+                f"{error_msg[:200]}\n"
                 "Проверьте логи для получения дополнительной информации."
             )
         finally:
@@ -245,33 +219,25 @@ class ProductSearchBot:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_access(update):
             return
-
         if update.message.text == "🔍 Начать поиск":
             await self.start(update, context)
             return
-        
         if update.message.text == "🛑 Остановить поиск":
             await self.stop_search(update, context)
             return
-
         if 'search_type' not in context.user_data:
             await update.message.reply_text("Пожалуйста, выберите тип поиска с помощью команды /start")
             return
-
         search_type = context.user_data['search_type']
         source = context.user_data.get('source', 'all')
         query = update.message.text.strip()
         user_id = update.effective_user.id
-        
         if user_id in self.active_searches:
             await update.message.reply_text("🔄 Поиск уже выполняется. Дождитесь результатов или остановите текущий поиск.")
             return
-            
         self.active_searches.add(user_id)
-        
         try:
             status_message = await update.message.reply_text("⏳ Начинаем поиск...")
-            
             if search_type == 'okpd2':
                 results = await self.scraper.search_all(okpd2=query, status_message=status_message)
             elif search_type == 'name':
@@ -284,17 +250,15 @@ class ProductSearchBot:
                     await status_message.edit_text("❌ Неверный формат. Введите код ОКПД2 и наименование через запятую")
                     self.active_searches.remove(user_id)
                     return
-            
             if not results:
                 await status_message.edit_text("❌ Ничего не найдено")
                 self.active_searches.remove(user_id)
                 return
-                
             # Отправляем результаты частями
             chunk_size = 10
             for i in range(0, len(results), chunk_size):
                 chunk = results[i:i + chunk_size]
-                message = f"📄 Результаты поиска (часть {i//chunk_size + 1}/{-(-len(results)//chunk_size)}):\n\n"
+                message = f"📄 Результаты поиска (часть {i//chunk_size + 1}/{-(-len(results)//chunk_size)}):\n"
                 for item in chunk:
                     message += (
                         f"🏢 {item['manufacturer']}\n"
@@ -308,24 +272,20 @@ class ProductSearchBot:
                         f"{'=' * 30}\n"
                     )
                 await update.message.reply_text(message)
-                
         except Exception as e:
             logger.error(f"Search error: {e}", exc_info=True)
             await status_message.edit_text(f"❌ Ошибка при поиске: {str(e)}")
         finally:
             self.active_searches.remove(user_id)
 
-    # Add this method to your ProductSearchBot class
     async def admin_commands(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle admin commands"""
         if not await self.check_access(update):
             return
-            
         user = update.effective_user
         if not self.user_manager.is_admin(user.username):
             await update.message.reply_text("У вас нет прав администратора.")
             return
-            
         try:
             command_parts = update.message.text.split()
             if len(command_parts) < 2:
@@ -336,25 +296,19 @@ class ProductSearchBot:
                     "/admin list - Список пользователей"
                 )
                 return
-                
             action = command_parts[1].lower()
-            
             if action == "list":
                 users = self.user_manager.get_all_users()
                 admins = users.get("admins", [])
                 regular_users = users.get("usernames", [])
-                
-                message = "📊 Список пользователей:\n\n"
+                message = "📊 Список пользователей:\n"
                 message += "👑 Администраторы:\n"
                 for admin in admins:
                     message += f"- {admin}\n"
-                    
                 message += "\n👤 Пользователи:\n"
                 for user in regular_users:
                     message += f"- {user}\n"
-                    
                 await update.message.reply_text(message)
-                
             elif action in ["add", "remove"] and len(command_parts) == 3:
                 target_username = command_parts[2]
                 if action == "add":
@@ -365,51 +319,22 @@ class ProductSearchBot:
                     await update.message.reply_text(f"❌ Пользователь {target_username} удален")
             else:
                 await update.message.reply_text("❌ Неверный формат команды")
-                
         except Exception as e:
             logger.error(f"Admin command error: {e}", exc_info=True)
             await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
-    def run(self):
-        try:
-            logger.info("Starting bot application...")
-            application = Application.builder().token(BOT_TOKEN).build()
-            
-            application.add_handler(CommandHandler("start", self.welcome))
-            application.add_handler(CommandHandler("help", self.help))
-            application.add_handler(CommandHandler("stop", self.stop_search))
-            application.add_handler(CommandHandler("admin", self.admin_commands))
-            application.add_handler(CommandHandler("update_gisp", self.update_gisp))
-            application.add_handler(CallbackQueryHandler(self.search_handler))
-            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
-            
-            logger.info("Starting polling...")
-            application.run_polling()
-        except Exception as e:
-            logger.error(f"Bot error: {e}")
-
-if __name__ == "__main__":
-    logger.info("Main program starting...")
-    bot = ProductSearchBot()
-    bot.run()
-
-
-async def search_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def search_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик для кнопок поиска"""
         query = update.callback_query
         await query.answer()
-        
         try:
             search_type = query.data.replace('search_', '')
             context.user_data['search_type'] = search_type
-            
             # Удаляем инлайн клавиатуру
             await query.message.edit_reply_markup(reply_markup=None)
-            
             # Добавляем кнопку остановки поиска
             keyboard = [[KeyboardButton("🛑 Остановить поиск")]]
             reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-            
             # Отправляем сообщение в зависимости от типа поиска
             if search_type == 'okpd2':
                 await query.message.reply_text(
@@ -427,7 +352,27 @@ async def search_handler(self, update: Update, context: ContextTypes.DEFAULT_TYP
                     "Пример: 26.20.11, компьютер",
                     reply_markup=reply_markup
                 )
-            
         except Exception as e:
             logger.error(f"Error in search handler: {e}", exc_info=True)
             await query.message.reply_text("❌ Произошла ошибка при обработке запроса")
+
+    def run(self):
+        try:
+            logger.info("Starting bot application...")
+            application = Application.builder().token(BOT_TOKEN).build()
+            application.add_handler(CommandHandler("start", self.welcome))
+            application.add_handler(CommandHandler("help", self.help))
+            application.add_handler(CommandHandler("stop", self.stop_search))
+            application.add_handler(CommandHandler("admin", self.admin_commands))
+            application.add_handler(CommandHandler("update_gisp", self.update_gisp))
+            application.add_handler(CallbackQueryHandler(self.search_handler))
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+            logger.info("Starting polling...")
+            application.run_polling()
+        except Exception as e:
+            logger.error(f"Bot error: {e}")
+
+if __name__ == "__main__":
+    logger.info("Main program starting...")
+    bot = ProductSearchBot()
+    bot.run()
