@@ -315,6 +315,61 @@ class ProductSearchBot:
         finally:
             self.active_searches.remove(user_id)
 
+    # Add this method to your ProductSearchBot class
+    async def admin_commands(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle admin commands"""
+        if not await self.check_access(update):
+            return
+            
+        user = update.effective_user
+        if not self.user_manager.is_admin(user.username):
+            await update.message.reply_text("У вас нет прав администратора.")
+            return
+            
+        try:
+            command_parts = update.message.text.split()
+            if len(command_parts) < 2:
+                await update.message.reply_text(
+                    "Доступные команды:\n"
+                    "/admin add username - Добавить пользователя\n"
+                    "/admin remove username - Удалить пользователя\n"
+                    "/admin list - Список пользователей"
+                )
+                return
+                
+            action = command_parts[1].lower()
+            
+            if action == "list":
+                users = self.user_manager.get_all_users()
+                admins = users.get("admins", [])
+                regular_users = users.get("usernames", [])
+                
+                message = "📊 Список пользователей:\n\n"
+                message += "👑 Администраторы:\n"
+                for admin in admins:
+                    message += f"- {admin}\n"
+                    
+                message += "\n👤 Пользователи:\n"
+                for user in regular_users:
+                    message += f"- {user}\n"
+                    
+                await update.message.reply_text(message)
+                
+            elif action in ["add", "remove"] and len(command_parts) == 3:
+                target_username = command_parts[2]
+                if action == "add":
+                    self.user_manager.add_user(target_username)
+                    await update.message.reply_text(f"✅ Пользователь {target_username} добавлен")
+                else:
+                    self.user_manager.remove_user(target_username)
+                    await update.message.reply_text(f"❌ Пользователь {target_username} удален")
+            else:
+                await update.message.reply_text("❌ Неверный формат команды")
+                
+        except Exception as e:
+            logger.error(f"Admin command error: {e}", exc_info=True)
+            await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
     def run(self):
         try:
             logger.info("Starting bot application...")
